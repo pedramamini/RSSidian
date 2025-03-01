@@ -20,7 +20,9 @@ class Feed(Base):
     last_updated = Column(DateTime, default=datetime.utcnow)
     last_checked = Column(DateTime, default=datetime.utcnow)
     muted = Column(Boolean, default=False)
-    error_count = Column(Integer, default=0)
+    muted_reason = Column(Text, nullable=True)  # Reason for muting the feed
+    error_count = Column(Integer, default=0)  # Count of consecutive errors
+    no_entries_count = Column(Integer, default=0)  # Count of consecutive checks with no entries
     last_error = Column(Text, nullable=True)
     
     # Relationships

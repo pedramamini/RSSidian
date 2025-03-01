@@ -250,6 +250,10 @@ def ingest(ctx, lookback, debug):
         result = processor.ingest_feeds(lookback_days=lookback, debug=debug)
         click.echo(f"Processed {result['feeds_processed']} feeds, found {result['new_articles']} new articles.")
         
+        # Display information about auto-muted feeds if any
+        if 'auto_muted' in result and result['auto_muted'] > 0:
+            click.echo(f"Auto-muted {result['auto_muted']} feeds due to persistent errors. Use 'subscriptions list' to see details.")
+        
         # Step 2: Process fetched articles
         if result['new_articles'] > 0:
             click.echo("Processing new articles...")
