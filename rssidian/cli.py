@@ -26,6 +26,30 @@ logger = logging.getLogger(__name__)
 console = Console()
 
 
+def ensure_db_exists(config):
+    """Ensure the database exists and is initialized."""
+    # Ensure the directory exists
+    db_dir = os.path.dirname(config.db_path)
+    if not os.path.exists(db_dir):
+        console.print(f"[yellow]Creating database directory: {db_dir}[/yellow]")
+        os.makedirs(db_dir, exist_ok=True)
+    
+    # Always initialize the database to ensure tables exist
+    # init_db will create tables if they don't exist
+    if not os.path.exists(config.db_path):
+        console.print("[yellow]Database does not exist. Creating it now...[/yellow]")
+        return init_db(config.db_path)
+    else:
+        # Even if the DB file exists, make sure the tables are created
+        # This is safe as create_all() checks if tables exist before creating
+        from sqlalchemy import create_engine
+        from .models import Base
+        
+        engine = create_engine(f"sqlite:///{config.db_path}")
+        Base.metadata.create_all(engine)
+        return get_db_session(config.db_path)
+
+
 @click.group()
 @click.pass_context
 def cli(ctx):
@@ -58,7 +82,7 @@ def init():
 def import_opml(ctx, opml_file, force):
     """Import feeds from OPML file."""
     config = ctx.obj["config"]
-    db_session = get_db_session(config.db_path)
+    db_session = ensure_db_exists(config)
     
     console.print(f"Importing feeds from [bold]{opml_file}[/bold]...")
     
@@ -111,7 +135,7 @@ def subscriptions():
 def list_subscriptions(ctx, sort):
     """List all feed subscriptions."""
     config = ctx.obj["config"]
-    db_session = get_db_session(config.db_path)
+    db_session = ensure_db_exists(config)
     
     # Query feeds with different sorting
     if sort == "title":
@@ -172,7 +196,7 @@ def list_subscriptions(ctx, sort):
 def mute_subscription(ctx, feed_title):
     """Mute a feed subscription."""
     config = ctx.obj["config"]
-    db_session = get_db_session(config.db_path)
+    db_session = ensure_db_exists(config)
     
     # Find feed by title
     feed = db_session.query(Feed).filter(Feed.title.like(f"%{feed_title}%")).first()
@@ -194,7 +218,7 @@ def mute_subscription(ctx, feed_title):
 def unmute_subscription(ctx, feed_title):
     """Unmute a feed subscription."""
     config = ctx.obj["config"]
-    db_session = get_db_session(config.db_path)
+    db_session = ensure_db_exists(config)
     
     # Find feed by title
     feed = db_session.query(Feed).filter(Feed.title.like(f"%{feed_title}%")).first()
@@ -217,7 +241,7 @@ def unmute_subscription(ctx, feed_title):
 def ingest(ctx, lookback, debug):
     """Ingest articles from RSS feeds."""
     config = ctx.obj["config"]
-    db_session = get_db_session(config.db_path)
+    db_session = ensure_db_exists(config)
     
     processor = RSSProcessor(config, db_session)
     
@@ -264,7 +288,7 @@ def ingest(ctx, lookback, debug):
 def search(ctx, query, relevance, refresh):
     """Search through article content using natural language."""
     config = ctx.obj["config"]
-    db_session = get_db_session(config.db_path)
+    db_session = ensure_db_exists(config)
     
     processor = RSSProcessor(config, db_session)
     
@@ -442,7 +466,7 @@ def backup_restore(ctx, backup_date, force):
 def show_config(ctx):
     """Show current configuration and system status."""
     config = ctx.obj["config"]
-    db_session = get_db_session(config.db_path)
+    db_session = ensure_db_exists(config)
     
     # Database stats
     article_count = db_session.query(Article).count()
