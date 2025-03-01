@@ -180,7 +180,7 @@ def process_feed(
             
             # Create new article
             new_article = Article(
-                feed_id=feed.id,
+                feed_id=feed.id,  # Ensure feed_id is set correctly
                 title=entry.get('title', 'Untitled'),
                 url=entry.get('link', ''),
                 guid=guid,
@@ -192,6 +192,11 @@ def process_feed(
                 processed=False,
                 word_count=len(clean_content.split())
             )
+            
+            # Double-check that feed_id is set correctly
+            if not new_article.feed_id:
+                logger.warning(f"feed_id not set for article {new_article.title}. Setting manually.")
+                new_article.feed_id = feed.id
             
             db_session.add(new_article)
             new_article_count += 1

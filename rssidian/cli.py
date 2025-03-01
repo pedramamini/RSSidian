@@ -5,6 +5,10 @@ import uvicorn
 from datetime import datetime, timedelta
 from typing import Optional
 import logging
+from rich.console import Console
+from rich.table import Table
+from rich.panel import Panel
+from rich import box
 
 from .config import Config, init_config
 from .models import init_db, get_db_session, Feed, Article
@@ -17,6 +21,9 @@ from .api import create_api
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+# Set up rich console
+console = Console()
 
 
 @click.group()
@@ -38,22 +45,55 @@ def init():
     db_session = init_db(config.db_path)
     db_session.close()
     
-    click.echo("RSSidian initialized successfully.")
+    console.print(Panel.fit(
+        "[bold green]RSSidian initialized successfully[/bold green]", 
+        border_style="green"
+    ))
 
 
 @cli.command()
 @click.argument("opml_file", type=click.Path(exists=True))
+@click.option("--force", is_flag=True, help="Force import even if feeds already exist")
 @click.pass_context
-def import_opml(ctx, opml_file):
+def import_opml(ctx, opml_file, force):
     """Import feeds from OPML file."""
     config = ctx.obj["config"]
     db_session = get_db_session(config.db_path)
     
+    console.print(f"Importing feeds from [bold]{opml_file}[/bold]...")
+    
     try:
+        # Parse the OPML file first to get a count of feeds
+        from .opml import parse_opml
+        feeds_data = parse_opml(opml_file)
+        console.print(f"Found [bold]{len(feeds_data)}[/bold] feeds in OPML file.")
+        
+        # Import the feeds
         new_count, updated_count = import_feeds_from_opml(opml_file, db_session)
-        click.echo(f"Imported {new_count} new feeds and updated {updated_count} existing feeds.")
+        
+        # Show summary
+        summary_table = Table(show_header=False, box=box.SIMPLE)
+        summary_table.add_column("Statistic", style="cyan")
+        summary_table.add_column("Value")
+        
+        if new_count > 0 or updated_count > 0:
+            summary_table.add_row("New feeds", f"[green]{new_count}[/green]")
+            summary_table.add_row("Updated feeds", f"[yellow]{updated_count}[/yellow]")
+            console.print(Panel.fit(
+                "[bold green]Import Successful[/bold green]", 
+                border_style="green"
+            ))
+        else:
+            console.print("[yellow]No new feeds were imported.[/yellow]")
+        
+        # Show total feeds in database
+        total_feeds = db_session.query(Feed).count()
+        summary_table.add_row("Total feeds in database", f"[bold]{total_feeds}[/bold]")
+        
+        console.print(summary_table)
+        
     except Exception as e:
-        click.echo(f"Error importing feeds: {str(e)}", err=True)
+        console.print(f"[bold red]Error importing feeds:[/bold red] {str(e)}")
     finally:
         db_session.close()
 
@@ -94,23 +134,34 @@ def list_subscriptions(ctx, sort):
     
     # Display feeds
     if not feeds:
-        click.echo("No subscriptions found.")
+        console.print("[bold red]No subscriptions found.[/bold red]")
         db_session.close()
         return
     
-    click.echo(f"Total subscriptions: {len(feeds)}")
-    click.echo()
+    console.print(f"[bold green]Total subscriptions:[/bold green] {len(feeds)}")
+    console.print()
+    
+    # Create a table for better visualization
+    table = Table(show_header=True, header_style="bold magenta", box=box.ROUNDED)
+    table.add_column("Feed")
+    table.add_column("Articles", justify="right")
+    table.add_column("Last Updated")
+    table.add_column("URL", style="dim")
     
     for feed in feeds:
         article_count = db_session.query(Article).filter_by(feed_id=feed.id).count()
-        muted_status = "[MUTED] " if feed.muted else ""
+        muted_status = "[dim italic]MUTED[/dim italic] " if feed.muted else ""
         last_updated = feed.last_updated.strftime("%Y-%m-%d") if feed.last_updated else "Never"
         
-        click.echo(f"{muted_status}{feed.title}")
-        click.echo(f"  URL: {feed.url}")
-        click.echo(f"  Articles: {article_count}")
-        click.echo(f"  Last Updated: {last_updated}")
-        click.echo()
+        feed_title = f"{muted_status}{feed.title}"
+        table.add_row(
+            feed_title,
+            str(article_count),
+            last_updated,
+            feed.url
+        )
+    
+    console.print(table)
     
     db_session.close()
 
@@ -298,9 +349,9 @@ def backup_create(ctx):
     
     backup_path = create_backup(config)
     if backup_path:
-        click.echo(f"Created backup at {backup_path}")
+        console.print(f"[green]Created backup at {backup_path}[/green]")
     else:
-        click.echo("Failed to create backup.", err=True)
+        console.print("[bold red]Failed to create backup.[/bold red]")
 
 
 @backup.command("list")
@@ -312,17 +363,27 @@ def backup_list(ctx):
     backups = get_backup_list(config)
     
     if not backups:
-        click.echo("No backups found.")
+        console.print("[yellow]No backups found.[/yellow]")
         return
     
-    click.echo(f"Found {len(backups)} backups:")
-    click.echo()
+    console.print(Panel.fit(
+        f"[bold blue]Found {len(backups)} backups[/bold blue]", 
+        border_style="blue"
+    ))
+    
+    backup_table = Table(box=box.SIMPLE)
+    backup_table.add_column("Date")
+    backup_table.add_column("Size", justify="right")
     
     for backup in backups:
-        click.echo(f"{backup['date']} - {backup['size_mb']:.2f} MB")
+        backup_table.add_row(
+            backup['date'],
+            f"{backup['size_mb']:.2f} MB"
+        )
     
-    click.echo()
-    click.echo(f"Backup location: {config.backup_dir}")
+    console.print(backup_table)
+    console.print()
+    console.print(f"[dim]Backup location: {config.backup_dir}[/dim]")
 
 
 @backup.command("restore")
@@ -351,23 +412,29 @@ def backup_restore(ctx, backup_date, force):
     current_size = os.path.getsize(db_path) / (1024 * 1024) if os.path.exists(db_path) else 0
     
     # Show comparison between current and backup
-    click.echo(f"Current database size: {current_size:.2f} MB")
-    click.echo(f"Backup database size: {target_backup['size_mb']:.2f} MB")
-    click.echo()
+    info_table = Table(show_header=False, box=box.SIMPLE)
+    info_table.add_column("Info", style="cyan")
+    info_table.add_column("Value")
+    
+    info_table.add_row("Current database size", f"{current_size:.2f} MB")
+    info_table.add_row("Backup database size", f"{target_backup['size_mb']:.2f} MB")
+    
+    console.print(info_table)
+    console.print()
     
     # Confirm restore
     if not force:
         if not click.confirm("Are you sure you want to restore from this backup? This will overwrite your current database."):
-            click.echo("Restore cancelled.")
+            console.print("[yellow]Restore cancelled.[/yellow]")
             return
     
     # Perform restore
     success = restore_backup(backup_date, config, force=force)
     
     if success:
-        click.echo(f"Successfully restored database from {target_backup['date']} backup.")
+        console.print(f"[green]Successfully restored database from {target_backup['date']} backup.[/green]")
     else:
-        click.echo("Failed to restore backup.", err=True)
+        console.print("[bold red]Failed to restore backup.[/bold red]")
 
 
 @cli.command()
@@ -394,28 +461,71 @@ def show_config(ctx):
     }
     
     # Configuration info
-    click.echo("=== RSSidian Configuration ===")
-    click.echo(f"Config path: {config.config_path}")
-    click.echo(f"Database path: {config.db_path}")
-    click.echo(f"Obsidian vault: {config.obsidian_vault_path}")
-    click.echo(f"Vector index: {config.annoy_index_path}")
-    click.echo(f"OpenRouter API configured: {'Yes' if config.openrouter_api_key else 'No'}")
-    click.echo(f"Default lookback period: {config.default_lookback} days")
-    click.echo(f"Minimum quality tier: {config.minimum_quality_tier}")
-    click.echo()
+    console.print(Panel.fit(
+        "[bold blue]RSSidian Configuration[/bold blue]", 
+        border_style="blue"
+    ))
+    
+    config_table = Table(show_header=False, box=box.SIMPLE)
+    config_table.add_column("Setting", style="cyan")
+    config_table.add_column("Value")
+    
+    config_table.add_row("Config path", config.config_path)
+    config_table.add_row("Database path", config.db_path)
+    config_table.add_row("Obsidian vault", config.obsidian_vault_path)
+    config_table.add_row("Vector index", config.annoy_index_path)
+    config_table.add_row(
+        "OpenRouter API", 
+        "[green]Configured[/green]" if config.openrouter_api_key else "[red]Not configured[/red]"
+    )
+    config_table.add_row("Default lookback period", f"{config.default_lookback} days")
+    config_table.add_row("Minimum quality tier", f"[bold]{config.minimum_quality_tier}[/bold]")
+    
+    console.print(config_table)
     
     # System status
-    click.echo("=== System Status ===")
-    click.echo(f"Total feeds: {feed_count} ({muted_feed_count} muted)")
-    click.echo(f"Total articles: {article_count}")
-    click.echo(f"Processed articles: {processed_article_count}")
-    click.echo(f"Articles with embeddings: {with_embedding_count}")
-    click.echo()
+    console.print("\n", Panel.fit(
+        "[bold blue]System Status[/bold blue]", 
+        border_style="blue"
+    ))
+    
+    stats_table = Table(show_header=False, box=box.SIMPLE)
+    stats_table.add_column("Statistic", style="cyan")
+    stats_table.add_column("Value")
+    
+    stats_table.add_row("Total feeds", f"{feed_count} ([dim]{muted_feed_count} muted[/dim])")
+    stats_table.add_row("Total articles", str(article_count))
+    stats_table.add_row("Processed articles", str(processed_article_count))
+    stats_table.add_row("Articles with embeddings", str(with_embedding_count))
+    
+    console.print(stats_table)
     
     # Quality distribution
-    click.echo("=== Quality Distribution ===")
+    console.print("\n", Panel.fit(
+        "[bold blue]Quality Distribution[/bold blue]", 
+        border_style="blue"
+    ))
+    
+    tier_table = Table(box=box.SIMPLE)
+    tier_table.add_column("Tier", style="bold")
+    tier_table.add_column("Count", justify="right")
+    
+    tier_colors = {
+        "S": "bright_green",
+        "A": "green",
+        "B": "yellow",
+        "C": "red",
+        "D": "bright_red"
+    }
+    
     for tier in ["S", "A", "B", "C", "D"]:
-        click.echo(f"{tier}-Tier: {quality_counts[tier]}")
+        count = quality_counts[tier]
+        tier_table.add_row(
+            f"[{tier_colors[tier]}]{tier}[/{tier_colors[tier]}]",
+            str(count)
+        )
+    
+    console.print(tier_table)
     
     db_session.close()
 

@@ -57,29 +57,40 @@ def import_feeds_from_opml(file_path: str, db_session: Session) -> Tuple[int, in
     
     new_count = 0
     updated_count = 0
+    error_count = 0
     
     for feed_data in feeds_data:
-        # Check if feed already exists
-        existing_feed = db_session.query(Feed).filter_by(url=feed_data["url"]).first()
-        
-        if existing_feed:
-            # Update existing feed
-            existing_feed.title = feed_data["title"]
-            existing_feed.description = feed_data["description"]
-            existing_feed.website_url = feed_data["website_url"]
-            updated_count += 1
-        else:
-            # Create new feed
-            new_feed = Feed(
-                title=feed_data["title"],
-                url=feed_data["url"],
-                description=feed_data["description"],
-                website_url=feed_data["website_url"],
-                last_updated=datetime.utcnow(),
-                last_checked=datetime.utcnow()
-            )
-            db_session.add(new_feed)
-            new_count += 1
+        try:
+            # Check if feed already exists - use get() to avoid potential session issues
+            existing_feed = db_session.query(Feed).filter_by(url=feed_data["url"]).one_or_none()
+            
+            if existing_feed:
+                # Update existing feed
+                existing_feed.title = feed_data["title"]
+                existing_feed.description = feed_data["description"]
+                existing_feed.website_url = feed_data["website_url"]
+                updated_count += 1
+                # Commit each update individually to avoid transaction conflicts
+                db_session.commit()
+            else:
+                # Create new feed
+                new_feed = Feed(
+                    title=feed_data["title"],
+                    url=feed_data["url"],
+                    description=feed_data["description"],
+                    website_url=feed_data["website_url"],
+                    last_updated=datetime.utcnow(),
+                    last_checked=datetime.utcnow()
+                )
+                db_session.add(new_feed)
+                # Commit each new feed individually to avoid transaction conflicts
+                db_session.commit()
+                new_count += 1
+        except Exception as e:
+            # Roll back the transaction if there's an error
+            db_session.rollback()
+            error_count += 1
+            print(f"Error importing feed {feed_data['title']}: {e}")
+            # Continue with the next feed
     
-    db_session.commit()
     return new_count, updated_count
