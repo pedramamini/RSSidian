@@ -10,9 +10,7 @@ filename_template = "RSS Digest {from_date} to {to_date}"
 
 # Template for generated digest note
 # Available variables: {date_range}, {summary_items}, {value_analysis}, {feed_stats}, {aggregated_summary}
-template = """{date_range}
-
-# Feed Digest
+template = """# Feed Digest
 
 ## Aggregated Overview by Subject
 {aggregated_summary}
