@@ -531,19 +531,27 @@ def search(ctx, query, relevance, refresh):
 @cli.command()
 @click.option("--port", type=int, default=8080, help="Port to run the API server on")
 @click.option("--host", type=str, default="127.0.0.1", help="Host to bind the API server to")
+@click.option("--stdio", is_flag=True, help="Run in STDIO mode for direct integration with Claude Desktop")
 @click.pass_context
-def mcp(ctx, port, host):
+def mcp(ctx, port, host, stdio):
     """Start the MCP (Model Context Protocol) API service."""
     config = ctx.obj["config"]
     
-    # Create the FastAPI app
-    app = create_api(config)
-    
-    click.echo(f"Starting MCP (Model Context Protocol) service on http://{host}:{port}")
-    click.echo("Press Ctrl+C to stop")
-    
-    # Run uvicorn server
-    uvicorn.run(app, host=host, port=port)
+    if stdio:
+        # Run in STDIO mode
+        from .mcp_stdio import run_stdio_server
+        click.echo("Starting MCP (Model Context Protocol) service in STDIO mode", err=True)
+        run_stdio_server(config)
+    else:
+        # Run as HTTP server
+        # Create the FastAPI app
+        app = create_api(config)
+        
+        click.echo(f"Starting MCP (Model Context Protocol) service on http://{host}:{port}")
+        click.echo("Press Ctrl+C to stop")
+        
+        # Run uvicorn server
+        uvicorn.run(app, host=host, port=port)
 
 
 @cli.group()

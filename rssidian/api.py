@@ -243,6 +243,39 @@ def create_api(config: Config) -> FastAPI:
     
     # MCP Endpoints
     
+    # MCP - Discovery endpoint
+    @app.get("/api/v1/mcp", tags=["MCP"])
+    def mcp_discovery():
+        """
+        Discovery endpoint for the Model Context Protocol service.
+        
+        Returns information about available endpoints and capabilities.
+        """
+        return {
+            "name": "RSSidian MCP",
+            "version": "1.0.0",
+            "description": "Model Context Protocol for RSSidian RSS feed manager",
+            "capabilities": [
+                "list_subscriptions",
+                "list_articles",
+                "get_article_content",
+                "search_articles",
+                "get_digest",
+                "get_feed_stats",
+                "natural_language_query"
+            ],
+            "endpoints": {
+                "discovery": "/api/v1/mcp",
+                "subscriptions": "/api/v1/mcp/subscriptions",
+                "articles": "/api/v1/mcp/articles",
+                "article_content": "/api/v1/mcp/articles/{article_id}/content",
+                "search": "/api/v1/mcp/search",
+                "digest": "/api/v1/mcp/digest",
+                "feed_stats": "/api/v1/mcp/feed-stats",
+                "query": "/api/v1/mcp/query"
+            }
+        }
+    
     # MCP - List subscriptions
     @app.get("/api/v1/mcp/subscriptions", tags=["MCP"])
     def mcp_list_subscriptions(db: Session = Depends(get_db)):

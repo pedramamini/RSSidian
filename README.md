@@ -194,7 +194,8 @@ rssidian search "meditation techniques for beginners" --relevance 75
 rssidian search "blockchain" --refresh
 
 # Start the MCP (Model Context Protocol) service
-rssidian mcp --port 8080
+rssidian mcp --port 8080                # Start in HTTP mode on port 8080
+rssidian mcp --stdio                   # Start in STDIO mode for Claude Desktop integration
 ```
 
 ## Database Backup
@@ -267,20 +268,116 @@ This will display:
 
 ## MCP (Model Context Protocol) Service API
 
-RESTful API for AI agent integration:
+RSSidian provides a Model Context Protocol (MCP) service that enables AI agents like Claude to interact with your RSS content. The MCP service exposes a RESTful API that allows for comprehensive access to your RSS-ingested content.
+
+### Starting the MCP Service
+
+```bash
+# Start the MCP service on the default port (8080)
+rssidian mcp
+
+# Start the MCP service on a custom port
+rssidian mcp --port 9000
+```
+
+### API Endpoints
 
 ```
 # Base URL
 http://localhost:8080/api/v1
 
-# Endpoints
+# Standard API Endpoints
 GET  /search                       # Natural language search across articles
 GET  /articles                     # List all processed articles
 GET  /articles/:id                 # Get article details and content
 GET  /subscriptions                # List all subscriptions with mute state
 POST /subscriptions/:title/mute    # Mute a feed subscription
 POST /subscriptions/:title/unmute  # Unmute a feed subscription
+
+# MCP-specific Endpoints
+GET  /mcp                          # Discovery endpoint with capabilities and endpoints
+GET  /mcp/subscriptions            # List all feed subscriptions
+GET  /mcp/articles                 # List articles with advanced filtering
+GET  /mcp/articles/:id/content     # Get full article content
+GET  /mcp/search                   # Semantic search with relevance control
+GET  /mcp/digest                   # Get digest of high-value articles
+GET  /mcp/feed-stats               # Get feed statistics
+POST /mcp/query                    # Process natural language queries
 ```
+
+### Configuring Claude Desktop to Use RSSidian MCP
+
+RSSidian MCP can be used with Claude Desktop in two ways: HTTP mode or STDIO mode.
+
+#### Option 1: STDIO Mode (Recommended)
+
+STDIO mode allows Claude Desktop to directly spawn and communicate with the RSSidian MCP server, without requiring a separate HTTP server to be running.
+
+1. Edit Claude Desktop's configuration file by clicking on the Claude icon in the menu bar, selecting "Settings", and then clicking "Edit Configuration File"
+
+2. Add a new entry to the `mcpServers` section of the JSON configuration:
+   ```json
+   {
+     "globalShortcut": "Shift+Space",
+     "mcpServers": {
+       "rssidian": {
+         "command": "/path/to/your/python",
+         "args": [
+           "-m",
+           "rssidian",
+           "mcp",
+           "--stdio"
+         ]
+       }
+       // other MCP servers...
+     }
+   }
+   ```
+
+   Replace `/path/to/your/python` with the actual path to your Python executable where RSSidian is installed. You can find this by running `which python` in the terminal where you normally run RSSidian.
+
+3. Save the configuration file
+
+#### Option 2: HTTP Mode
+
+In HTTP mode, you need to start the RSSidian MCP service separately and configure Claude Desktop to connect to it.
+
+1. Start the RSSidian MCP service manually:
+   ```bash
+   rssidian mcp --port 8080
+   ```
+
+2. Edit Claude Desktop's configuration file by clicking on the Claude icon in the menu bar, selecting "Settings", and then clicking "Edit Configuration File"
+
+3. Add a new entry to the `mcpServers` section of the JSON configuration:
+   ```json
+   {
+     "globalShortcut": "Shift+Space",
+     "mcpServers": {
+       "rssidian-http": {
+         "command": "/path/to/your/python",
+         "args": [
+           "-m",
+           "rssidian",
+           "mcp",
+           "--port",
+           "8080"
+         ]
+       }
+       // other MCP servers...
+     }
+   }
+   ```
+
+4. Save the configuration file
+
+5. When chatting with Claude, you can now ask questions about your RSS content such as:
+   - "What are the latest articles about AI?"
+   - "Find articles about blockchain from the last week"
+   - "Summarize the top quality articles from my tech feeds"
+   - "What are the trending topics across my subscriptions?"
+
+Claude will automatically use the RSSidian MCP service to access your RSS content and provide informed responses based on your feeds.
 
 ## Requirements
 
