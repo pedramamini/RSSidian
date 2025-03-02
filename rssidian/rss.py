@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 from tqdm import tqdm
 import logging
+from rich.progress import Progress, TextColumn, BarColumn, SpinnerColumn, TimeElapsedColumn, TimeRemainingColumn, TaskProgressColumn, MofNCompleteColumn
 
 from .models import Feed, Article
 from .config import Config
@@ -724,49 +725,57 @@ def process_all_feeds(
     total_jina_enhanced = 0
     total_with_summary = 0
     total_with_value = 0
-    # Create a better progress bar with more information
-    progress_bar = tqdm(
-        feeds, 
-        desc="Processing feeds", 
-        bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}{postfix}]",
-        ncols=100  # Set a fixed width for better display
-    )
-    
-    for feed in progress_bar:
-        # Check if feed was muted before processing
-        was_muted_before = feed.muted
+    # Create a beautiful Rich progress bar
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[bold blue]{task.description}"),
+        BarColumn(bar_width=40, complete_style="green", finished_style="green"),
+        MofNCompleteColumn(),
+        TaskProgressColumn(),
+        TimeElapsedColumn(),
+        TimeRemainingColumn(),
+        TextColumn("[bold]{task.fields[stats]}"),
+        expand=True
+    ) as progress:
+        # Add the main task
+        main_task = progress.add_task(f"[bold]Processing {len(feeds)} feeds", total=len(feeds), stats="")
         
-        # Set a more informative description with feed title
-        feed_desc = f"Processing: {feed.title[:40]}"
-        progress_bar.set_description(feed_desc)
-        
-        # Add timing information
-        feed_start_time = time.time()
-        
-        # Process the feed
-        new_articles, jina_enhanced, with_summary, with_value = process_feed(
-            feed,
-            db_session, 
-            lookback_days=lookback_days,
-            max_articles=max_articles_per_feed,
-            progress_callback=lambda msg: progress_bar.set_description(msg[:40]),
-            max_errors=max_errors,
-            retry_attempts=retry_attempts,
-            config=config,
-            analyze_content=analyze_content
-        )
-        
-        # Calculate processing time
-        feed_duration = time.time() - feed_start_time
-        
-        # Update postfix with stats
-        progress_bar.set_postfix({
-            "new": new_articles,
-            "jina": jina_enhanced,
-            "summary": with_summary,
-            "value": with_value,
-            "time": f"{feed_duration:.1f}s"
-        })
+        for feed in feeds:
+            # Check if feed was muted before processing
+            was_muted_before = feed.muted
+            
+            # Update the progress description with feed title
+            progress.update(main_task, description=f"[bold blue]Processing: [cyan]{feed.title[:40]}")
+            
+            # Add timing information
+            feed_start_time = time.time()
+            
+            # Create a progress callback that updates the task description
+            def update_progress(msg):
+                progress.update(main_task, description=f"[bold blue]{msg[:40]}")
+            
+            # Process the feed
+            new_articles, jina_enhanced, with_summary, with_value = process_feed(
+                feed,
+                db_session, 
+                lookback_days=lookback_days,
+                max_articles=max_articles_per_feed,
+                progress_callback=update_progress,
+                max_errors=max_errors,
+                retry_attempts=retry_attempts,
+                config=config,
+                analyze_content=analyze_content
+            )
+            
+            # Calculate processing time
+            feed_duration = time.time() - feed_start_time
+            
+            # Update stats field with colorful information
+            stats_text = f"[green]new:[/green] {new_articles} [yellow]jina:[/yellow] {jina_enhanced} [blue]summary:[/blue] {with_summary} [magenta]value:[/magenta] {with_value} [cyan]time:[/cyan] {feed_duration:.1f}s"
+            progress.update(main_task, stats=stats_text)
+            
+            # Advance the progress
+            progress.update(main_task, advance=1)
         total_new_articles += new_articles
         total_jina_enhanced += jina_enhanced
         total_with_summary += with_summary

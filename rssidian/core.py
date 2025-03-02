@@ -11,6 +11,7 @@ import re
 from collections import defaultdict
 from sentence_transformers import SentenceTransformer
 from annoy import AnnoyIndex
+from rich.progress import Progress, TextColumn, BarColumn, SpinnerColumn, TimeElapsedColumn, TimeRemainingColumn, TaskProgressColumn
 
 from .config import Config
 from .models import Article, Feed
@@ -262,47 +263,61 @@ class RSSProcessor:
             "with_embedding": 0
         }
         
-        # Process articles in batches
-        for i in range(0, len(unprocessed), batch_size):
-            batch = unprocessed[i:i+batch_size]
-            progress_bar = tqdm(batch, desc=f"Processing batch {i//batch_size + 1}/{(len(unprocessed)-1)//batch_size + 1}")
+        # Process articles in batches using Rich progress bar
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[bold blue]{task.description}"),
+            BarColumn(bar_width=40, complete_style="green", finished_style="green"),
+            TaskProgressColumn(),
+            TimeElapsedColumn(),
+            TimeRemainingColumn(),
+            expand=True
+        ) as progress:
+            overall_task = progress.add_task(f"[bold]Processing {len(unprocessed)} articles", total=len(unprocessed))
             
-            for article in progress_bar:
-                progress_bar.set_description(f"Processing {article.title[:30]}")
+            for i in range(0, len(unprocessed), batch_size):
+                batch = unprocessed[i:i+batch_size]
                 
-                # Generate summary
-                summary = self._generate_summary(article)
-                if summary:
-                    article.summary = summary
-                    stats["with_summary"] += 1
-                
-                # Analyze value
-                if self.config.value_prompt_enabled:
-                    quality_tier, quality_score, labels = self._analyze_value(article)
-                    article.quality_tier = quality_tier
-                    article.quality_score = quality_score
-                    article.labels = labels
-                    if quality_tier:
-                        stats["with_value"] += 1
-                
-                # Generate embedding from content and summary
-                if article.content:
-                    text_to_embed = article.content
-                    if article.summary:
-                        text_to_embed = article.summary + "\n\n" + text_to_embed
+                for article in batch:
+                    # Update the progress description with current article
+                    progress.update(overall_task, description=f"[bold blue]Processing: [cyan]{article.title[:40]}")
                     
-                    embedding = self._generate_embedding(text_to_embed)
-                    self._store_embedding(article.id, embedding)
-                    article.embedding_generated = True
-                    stats["with_embedding"] += 1
-                
-                # Mark as processed
-                article.processed = True
-                article.processed_at = datetime.utcnow()
-                stats["articles_processed"] += 1
-                
-                # Save after each article in case of errors
-                self.db_session.commit()
+                    # Generate summary
+                    summary = self._generate_summary(article)
+                    if summary:
+                        article.summary = summary
+                        stats["with_summary"] += 1
+                    
+                    # Analyze value
+                    if self.config.value_prompt_enabled:
+                        quality_tier, quality_score, labels = self._analyze_value(article)
+                        article.quality_tier = quality_tier
+                        article.quality_score = quality_score
+                        article.labels = labels
+                        if quality_tier:
+                            stats["with_value"] += 1
+                    
+                    # Generate embedding from content and summary
+                    if article.content:
+                        text_to_embed = article.content
+                        if article.summary:
+                            text_to_embed = article.summary + "\n\n" + text_to_embed
+                        
+                        embedding = self._generate_embedding(text_to_embed)
+                        self._store_embedding(article.id, embedding)
+                        article.embedding_generated = True
+                        stats["with_embedding"] += 1
+                    
+                    # Mark as processed
+                    article.processed = True
+                    article.processed_at = datetime.utcnow()
+                    stats["articles_processed"] += 1
+                    
+                    # Save after each article in case of errors
+                    self.db_session.commit()
+                    
+                    # Update progress
+                    progress.update(overall_task, advance=1)
         
         return stats
     
