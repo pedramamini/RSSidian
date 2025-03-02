@@ -111,32 +111,35 @@ def analyze_value(content: str, api_key: str, prompt_template: str, model: str) 
         return None, None, None
     
     try:
-        # Try to parse as JSON
-        data = json.loads(response)
-        
-        # Extract quality tier from the rating field
+        # The response is markdown front matter, not JSON
+        # Parse the markdown front matter format
         quality_tier = None
-        rating = data.get("rating:")
-        if rating and isinstance(rating, str):
-            match = re.search(r"([SABCD]) Tier", rating)
-            if match:
-                quality_tier = match.group(1)
+        quality_score = None
+        labels = None
         
-        # Extract quality score
-        quality_score = data.get("quality-score")
-        if isinstance(quality_score, str):
+        # Extract Rating (quality tier)
+        rating_match = re.search(r'Rating:: ([SABCD])', response)
+        if rating_match:
+            quality_tier = rating_match.group(1)
+        
+        # Extract QualityScore
+        score_match = re.search(r'QualityScore:: (\d+)', response)
+        if score_match:
             try:
-                quality_score = int(quality_score)
+                quality_score = int(score_match.group(1))
             except ValueError:
                 quality_score = None
         
-        # Extract labels
-        labels = data.get("labels")
+        # Extract Labels
+        labels_match = re.search(r'Labels:: (.*?)$', response, re.MULTILINE)
+        if labels_match:
+            labels = labels_match.group(1).strip()
         
         return quality_tier, quality_score, labels
     
-    except (json.JSONDecodeError, KeyError) as e:
+    except Exception as e:
         logger.error(f"Failed to parse value analysis: {str(e)}")
+        logger.debug(f"Response content: {response}")
         return None, None, None
 
 
@@ -152,17 +155,48 @@ def clean_html(content: str) -> str:
     # If content is empty, return empty string
     if not content:
         return ""
-        
+    
     # Check if content is likely markdown (from Jina.ai)
-    if content.startswith('#') or '**' in content or '*' in content or '```' in content:
-        # For markdown, we'll preserve it as is, but remove excessive whitespace
-        clean_text = re.sub(r'\s{2,}', ' ', content).strip()
-        return clean_text
+    markdown_indicators = [
+        content.startswith('#'),  # Headers
+        '**' in content,  # Bold
+        '*' in content,  # Italic or list
+        '```' in content,  # Code blocks
+        '>' in content,  # Blockquotes
+        '- ' in content,  # Lists
+        '[' in content and '](' in content  # Links
+    ]
+    
+    if any(markdown_indicators):
+        # For markdown, preserve it but clean up excessive whitespace
+        # Remove any HTML tags that might be mixed in
+        content = re.sub(r'<[^>]+>', ' ', content)
+        # Fix common Jina.ai artifacts
+        content = re.sub(r'\[\s*\]\(\s*\)', '', content)  # Empty links
+        content = re.sub(r'\[\s*\]\(http[^)]+\)', '', content)  # Links with empty text
+        # Remove excessive newlines (more than 2 in a row)
+        content = re.sub(r'\n{3,}', '\n\n', content)
+        # Remove excessive whitespace
+        content = re.sub(r'\s{2,}', ' ', content)
+        return content.strip()
     
     # For HTML content
-    # Simple regex to remove HTML tags
+    # More comprehensive HTML cleaning
+    # Remove script and style elements completely
+    content = re.sub(r'<script[^>]*>.*?</script>', '', content, flags=re.DOTALL)
+    content = re.sub(r'<style[^>]*>.*?</style>', '', content, flags=re.DOTALL)
+    # Remove HTML comments
+    content = re.sub(r'<!--.*?-->', '', content, flags=re.DOTALL)
+    # Replace common HTML entities
+    content = content.replace('&nbsp;', ' ')
+    content = content.replace('&amp;', '&')
+    content = content.replace('&lt;', '<')
+    content = content.replace('&gt;', '>')
+    content = content.replace('&quot;', '"')
+    content = content.replace('&apos;', "'")
+    # Remove all remaining HTML tags
     clean_text = re.sub(r'<[^>]+>', ' ', content)
-    # Remove extra whitespace
+    # Normalize whitespace
     clean_text = re.sub(r'\s+', ' ', clean_text).strip()
     return clean_text
 
@@ -176,39 +210,110 @@ def fetch_jina_content(url: str) -> Optional[str]:
     Returns:
         Markdown content or None if fetching failed
     """
+    start_time = time.time()
+    logger.info(f"Fetching content from Jina.ai for URL: {url}")
+    
     try:
+        # Use direct URL to ensure proper content extraction
         jina_url = f"https://r.jina.ai/{url}"
-        response = requests.get(jina_url, timeout=10)
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
+        }
+        
+        jina_start_time = time.time()
+        logger.debug(f"Sending request to Jina.ai: {jina_url}")
+        response = requests.get(jina_url, headers=headers, timeout=15)
+        jina_duration = time.time() - jina_start_time
         
         if response.status_code == 200:
-            logger.info(f"Successfully fetched content from Jina.ai for URL: {url}")
-            return response.text
+            # Jina.ai returns the content in markdown format
+            content = response.text
+            
+            # Verify we actually got content and not just a tiny response
+            if len(content) < 100:
+                logger.warning(f"Jina.ai returned suspiciously short content ({len(content)} chars) for URL: {url} in {jina_duration:.2f}s")
+                # Try direct URL as fallback
+                direct_start_time = time.time()
+                logger.info(f"Trying direct URL as fallback: {url}")
+                direct_response = requests.get(url, headers=headers, timeout=15)
+                direct_duration = time.time() - direct_start_time
+                
+                if direct_response.status_code == 200 and len(direct_response.text) > len(content):
+                    logger.info(f"Using direct URL content instead of Jina.ai for URL: {url} ({len(direct_response.text)} chars, fetched in {direct_duration:.2f}s)")
+                    content = direct_response.text
+                else:
+                    logger.info(f"Direct URL fallback didn't provide better content ({len(direct_response.text)} chars) in {direct_duration:.2f}s")
+            
+            total_duration = time.time() - start_time
+            logger.info(f"Successfully fetched content from Jina.ai for URL: {url} ({len(content)} chars) in {total_duration:.2f}s")
+            return content
         else:
-            logger.warning(f"Failed to fetch content from Jina.ai for URL: {url}. Status code: {response.status_code}")
+            logger.warning(f"Failed to fetch content from Jina.ai for URL: {url}. Status code: {response.status_code} after {jina_duration:.2f}s")
+            
+            # Try direct URL as fallback
+            try:
+                direct_start_time = time.time()
+                logger.info(f"Trying direct URL as fallback: {url}")
+                direct_response = requests.get(url, headers=headers, timeout=15)
+                direct_duration = time.time() - direct_start_time
+                
+                if direct_response.status_code == 200:
+                    logger.info(f"Using direct URL content as fallback for URL: {url} ({len(direct_response.text)} chars, fetched in {direct_duration:.2f}s)")
+                    return direct_response.text
+                else:
+                    logger.warning(f"Direct URL fallback failed with status code: {direct_response.status_code} after {direct_duration:.2f}s")
+            except Exception as direct_err:
+                logger.warning(f"Direct URL fallback also failed for URL: {url}. Error: {str(direct_err)}")
+            
+            total_duration = time.time() - start_time
+            logger.warning(f"All content fetching attempts failed for URL: {url} after {total_duration:.2f}s")
             return None
     except Exception as e:
-        logger.warning(f"Error fetching content from Jina.ai for URL: {url}. Error: {str(e)}")
+        total_duration = time.time() - start_time
+        logger.warning(f"Error fetching content from Jina.ai for URL: {url}. Error: {str(e)} after {total_duration:.2f}s")
         return None
 
 
 def extract_content(entry: Dict[str, Any]) -> str:
     """Extract the main content from a feed entry."""
+    content = ""
+    
     # Try different content fields in order of preference
+    # Some feeds put the full content in the 'content' field
     if 'content' in entry and entry['content']:
-        for content in entry['content']:
-            if 'value' in content:
-                return content['value']
+        for content_item in entry['content']:
+            if 'value' in content_item:
+                content = content_item['value']
+                # If content is substantial, return it
+                if len(content) > 500:  # Arbitrary threshold for "substantial" content
+                    return content
     
-    if 'summary_detail' in entry and 'value' in entry['summary_detail']:
-        return entry['summary_detail']['value']
+    # Try other common fields
+    if not content and 'summary_detail' in entry and 'value' in entry['summary_detail']:
+        content = entry['summary_detail']['value']
     
-    if 'summary' in entry:
-        return entry['summary']
+    if not content and 'summary' in entry:
+        content = entry['summary']
     
-    if 'description' in entry:
-        return entry['description']
+    if not content and 'description' in entry:
+        content = entry['description']
     
-    return ""
+    # Some feeds include content in non-standard fields
+    if not content and 'content_encoded' in entry:
+        content = entry['content_encoded']
+    
+    # Some feeds include content in the 'value' field directly
+    if not content and 'value' in entry:
+        content = entry['value']
+        
+    # Log if we couldn't find any content
+    if not content:
+        logger.warning(f"No content found in feed entry: {entry.get('title', 'Unknown title')}")
+        # Print available fields for debugging
+        logger.debug(f"Available fields: {list(entry.keys())}")
+    
+    return content
 
 
 def parse_published_date(entry: Dict[str, Any]) -> Optional[datetime]:
@@ -431,19 +536,34 @@ def process_feed(
             if existing_article:
                 continue
             
-            # Extract content
+            # Extract content from feed entry
             content = extract_content(entry)
             
-            # If content is empty but we have a URL in the GUID, try to fetch content from Jina.ai
+            # Get the article URL - prefer the link field over the guid
+            article_url = entry.get('link', guid) if entry.get('link') else guid
+            
+            # Try to fetch content from Jina.ai in these cases:
+            # 1. No content was found in the feed
+            # 2. Content is too short (likely truncated)
+            # 3. Content appears to be just a summary or snippet
             jina_enhanced = False
-            if not content and guid.startswith('http'):
-                logger.info(f"No content found for entry with GUID {guid}, attempting to fetch from Jina.ai")
-                jina_content = fetch_jina_content(guid)
-                if jina_content:
+            should_fetch_jina = (
+                not content or 
+                len(content) < 1000 or  # Content is suspiciously short
+                "[...]".lower() in content.lower() or  # Content contains ellipsis indicating truncation
+                "read more".lower() in content.lower() or  # Content has "read more" prompt
+                "continue reading".lower() in content.lower()  # Content has "continue reading" prompt
+            )
+            
+            if should_fetch_jina and article_url.startswith('http'):
+                logger.info(f"Content may be incomplete for {article_url}, attempting to fetch from Jina.ai")
+                jina_content = fetch_jina_content(article_url)
+                
+                if jina_content and (not content or len(jina_content) > len(content)):
+                    logger.info(f"Using Jina.ai content for {article_url} - {len(jina_content)} chars vs original {len(content)} chars")
                     content = jina_content
                     jina_enhanced = True
                     jina_enhanced_count += 1
-                    logger.info(f"Successfully fetched content from Jina.ai for {guid}")
             
             clean_content = clean_html(content)
             
@@ -463,6 +583,16 @@ def process_feed(
                 jina_enhanced=jina_enhanced  # Set flag if content was fetched from Jina.ai
             )
             
+            # Log article information
+            word_count = len(clean_content.split())
+            logger.info(f"New article: '{new_article.title[:50]}' ({word_count} words, {len(clean_content)} chars)")
+            if jina_enhanced:
+                logger.info(f"  - Content enhanced with Jina.ai")
+            if new_article.author:
+                logger.info(f"  - Author: {new_article.author}")
+            if published_date:
+                logger.info(f"  - Published: {published_date.strftime('%Y-%m-%d %H:%M')}")
+            
             # Double-check that feed_id is set correctly
             if not new_article.feed_id:
                 logger.warning(f"feed_id not set for article {new_article.title}. Setting manually.")
@@ -473,35 +603,54 @@ def process_feed(
                 if progress_callback:
                     progress_callback(f"Analyzing article: {new_article.title[:30]}")
                 
+                analysis_start_time = time.time()
+                
                 # Generate summary
                 if config.openrouter_api_key and config.openrouter_prompt:
+                    logger.info(f"Generating summary for article: {new_article.title[:50]}")
+                    summary_start_time = time.time()
                     summary = generate_summary(
                         clean_content,
                         config.openrouter_api_key,
                         config.openrouter_prompt,
                         config.openrouter_model
                     )
+                    summary_duration = time.time() - summary_start_time
                     if summary:
                         new_article.summary = summary
                         with_summary_count += 1
+                        logger.info(f"Summary generated successfully in {summary_duration:.2f}s ({len(summary)} chars)")
+                    else:
+                        logger.warning(f"Failed to generate summary after {summary_duration:.2f}s")
                 
                 # Analyze value
                 if config.openrouter_api_key and config.value_prompt_enabled and config.value_prompt:
+                    logger.info(f"Analyzing value for article: {new_article.title[:50]}")
+                    value_start_time = time.time()
                     quality_tier, quality_score, labels = analyze_value(
                         clean_content,
                         config.openrouter_api_key,
                         config.value_prompt,
                         config.openrouter_processing_model or config.openrouter_model
                     )
+                    value_duration = time.time() - value_start_time
+                    
                     new_article.quality_tier = quality_tier
                     new_article.quality_score = quality_score
                     new_article.labels = labels
+                    
                     if quality_tier:
                         with_value_count += 1
+                        logger.info(f"Value analysis completed in {value_duration:.2f}s: Tier {quality_tier}, Score {quality_score}, Labels: {labels}")
+                    else:
+                        logger.warning(f"Value analysis failed after {value_duration:.2f}s")
                 
                 # Mark as processed
                 new_article.processed = True
                 new_article.processed_at = datetime.utcnow()
+                
+                total_analysis_duration = time.time() - analysis_start_time
+                logger.info(f"Total analysis time for article '{new_article.title[:50]}': {total_analysis_duration:.2f}s")
             
             db_session.add(new_article)
             new_article_count += 1
@@ -575,24 +724,49 @@ def process_all_feeds(
     total_jina_enhanced = 0
     total_with_summary = 0
     total_with_value = 0
-    progress_bar = tqdm(feeds, desc="Processing feeds")
+    # Create a better progress bar with more information
+    progress_bar = tqdm(
+        feeds, 
+        desc="Processing feeds", 
+        bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}{postfix}]",
+        ncols=100  # Set a fixed width for better display
+    )
     
     for feed in progress_bar:
         # Check if feed was muted before processing
         was_muted_before = feed.muted
         
-        progress_bar.set_description(f"Processing {feed.title[:30]}")
+        # Set a more informative description with feed title
+        feed_desc = f"Processing: {feed.title[:40]}"
+        progress_bar.set_description(feed_desc)
+        
+        # Add timing information
+        feed_start_time = time.time()
+        
+        # Process the feed
         new_articles, jina_enhanced, with_summary, with_value = process_feed(
             feed,
             db_session, 
             lookback_days=lookback_days,
             max_articles=max_articles_per_feed,
-            progress_callback=lambda msg: progress_bar.set_description(msg[:30]),
+            progress_callback=lambda msg: progress_bar.set_description(msg[:40]),
             max_errors=max_errors,
             retry_attempts=retry_attempts,
             config=config,
             analyze_content=analyze_content
         )
+        
+        # Calculate processing time
+        feed_duration = time.time() - feed_start_time
+        
+        # Update postfix with stats
+        progress_bar.set_postfix({
+            "new": new_articles,
+            "jina": jina_enhanced,
+            "summary": with_summary,
+            "value": with_value,
+            "time": f"{feed_duration:.1f}s"
+        })
         total_new_articles += new_articles
         total_jina_enhanced += jina_enhanced
         total_with_summary += with_summary
