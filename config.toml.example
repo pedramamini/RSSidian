@@ -5,10 +5,13 @@
 vault_path = "~/Documents/Obsidian"
 
 # Template for generated digest note
-# Available variables: {date_range}, {summary_items}, {value_analysis}, {feed_stats}
+# Available variables: {date_range}, {summary_items}, {value_analysis}, {feed_stats}, {aggregated_summary}
 template = """{date_range}
 
 # Feed Digest
+
+## Aggregated Overview by Subject
+{aggregated_summary}
 
 ## Top Stories
 {summary_items}
@@ -56,6 +59,25 @@ value_prompt_enabled = true
 # Minimum quality tier to include in digest (S, A, B, C, D)
 # Articles with lower quality tiers will be discarded
 minimum_quality_tier = "B"
+
+# Aggregator prompt template for generating a categorized overview of articles
+# Available variables: {summaries}
+aggregator_prompt = """You are an expert content curator and analyst.
+
+Your task is to organize and summarize the following article summaries into a cohesive overview, categorized by subject matter.
+
+Group the articles into clear categories such as Politics, Science, Technology, AI/GenAI, Programming, Business, Startups, Health, etc. based on their content.
+
+For each category:
+1. Provide a brief overview of the key themes or trends
+2. List the most important articles with their titles (in markdown link format) and a 1-sentence description
+3. Highlight any connections or contradictions between articles in the same category
+
+Finally, provide a brief "Big Picture" section that identifies any cross-category trends or important developments.
+
+Article Summaries:
+{summaries}
+"""
 
 # Value analysis prompt template
 # This prompt analyzes the content to determine its value density

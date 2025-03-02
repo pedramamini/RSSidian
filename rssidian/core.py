@@ -440,6 +440,55 @@ class RSSProcessor:
         
         return excerpt
     
+    def _generate_aggregated_summary(self, articles: List[Article]) -> Optional[str]:
+        """
+        Generate an aggregated summary of articles categorized by subject matter.
+        
+        Args:
+            articles: List of articles to summarize
+            
+        Returns:
+            Aggregated summary text or None if generation failed
+        """
+        if not articles:
+            logger.warning("No articles to generate aggregated summary")
+            return None
+        
+        # Prepare article summaries for the prompt
+        article_summaries = []
+        for article in articles:
+            feed = self.db_session.query(Feed).filter_by(id=article.feed_id).first()
+            feed_name = feed.title if feed else "Unknown Feed"
+            
+            # Format: Title (Feed) - Summary
+            summary_text = f"## {article.title} ({feed_name})\n"
+            
+            # Add URL
+            summary_text += f"URL: {article.url}\n"
+            
+            # Add quality tier if available
+            if article.quality_tier:
+                summary_text += f"Quality: {article.quality_tier}-Tier\n"
+            
+            # Add labels if available
+            if article.labels:
+                summary_text += f"Labels: {article.labels}\n"
+            
+            # Add the article summary
+            if article.summary:
+                summary_text += f"\n{article.summary}\n"
+            
+            article_summaries.append(summary_text)
+        
+        # Join all summaries with separators
+        all_summaries = "\n---\n".join(article_summaries)
+        
+        # Create the prompt with the summaries
+        prompt = self.config.aggregator_prompt.format(summaries=all_summaries)
+        
+        # Call the API to generate the aggregated summary
+        return self._call_openrouter_api(prompt, self.config.openrouter_processing_model)
+    
     def generate_digest(self, lookback_days: int = 7) -> Dict[str, Any]:
         """
         Generate a digest of high-value articles from the lookback period.
@@ -504,6 +553,9 @@ class RSSProcessor:
         
         sorted_topics = sorted(topics.items(), key=lambda x: get_topic_quality(x[1]), reverse=True)
         
+        # Generate aggregated summary
+        aggregated_summary = self._generate_aggregated_summary(high_value_articles)
+        
         # Build summary items
         summary_items = []
         for topic, topic_articles in sorted_topics:
@@ -552,7 +604,8 @@ class RSSProcessor:
             "date_range": f"Feed Overview from {start_date.strftime('%Y-%m-%d')} through {end_date.strftime('%Y-%m-%d')}",
             "summary_items": "\n\n".join(summary_items),
             "feed_stats": "\n".join(feed_stats),
-            "articles": high_value_articles
+            "articles": high_value_articles,
+            "aggregated_summary": aggregated_summary
         }
         
         return digest

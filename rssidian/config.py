@@ -152,6 +152,27 @@ Content:
     def analyze_during_ingestion(self) -> bool:
         """Check if content should be analyzed during ingestion."""
         return self.get("feeds", "analyze_during_ingestion", True)
+        
+    @property
+    def aggregator_prompt(self) -> str:
+        """Get aggregator prompt template for generating a categorized overview of articles."""
+        default_prompt = """You are an expert content curator and analyst.
+
+Your task is to organize and summarize the following article summaries into a cohesive overview, categorized by subject matter.
+
+Group the articles into clear categories such as Politics, Science, Technology, AI/GenAI, Programming, Business, Startups, Health, etc. based on their content.
+
+For each category:
+1. Provide a brief overview of the key themes or trends
+2. List the most important articles with their titles (in markdown link format) and a 1-sentence description
+3. Highlight any connections or contradictions between articles in the same category
+
+Finally, provide a brief "Big Picture" section that identifies any cross-category trends or important developments.
+
+Article Summaries:
+{summaries}
+"""
+        return self.get("openrouter", "aggregator_prompt", default_prompt)
 
 
 def init_config() -> None:

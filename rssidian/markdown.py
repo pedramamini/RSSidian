@@ -65,7 +65,8 @@ def write_digest_to_obsidian(digest: Dict[str, Any], config: Config) -> Optional
     content = template.format(
         date_range=digest["date_range"],
         summary_items=digest["summary_items"],
-        feed_stats=digest["feed_stats"]
+        feed_stats=digest["feed_stats"],
+        aggregated_summary=digest.get("aggregated_summary", "No aggregated summary available.")
     )
     
     # Write to file
