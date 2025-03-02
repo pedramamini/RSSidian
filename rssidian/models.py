@@ -26,6 +26,11 @@ class Feed(Base):
     no_entries_count = Column(Integer, default=0)  # Count of consecutive checks with no entries
     last_error = Column(Text, nullable=True)
     
+    # Statistics
+    article_count = Column(Integer, default=0)  # Total count of ingested articles
+    avg_quality_score = Column(Float, nullable=True)  # Average quality score of articles
+    quality_tier_counts = Column(Text, nullable=True)  # JSON string of quality tier counts {"S": 5, "A": 10, ...}
+    
     # Relationships
     articles = relationship("Article", back_populates="feed", cascade="all, delete-orphan")
 

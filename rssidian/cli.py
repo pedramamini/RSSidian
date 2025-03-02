@@ -1,5 +1,6 @@
 import os
 import sys
+import json
 import click
 import uvicorn
 from datetime import datetime, timedelta
@@ -180,7 +181,7 @@ def subscriptions():
 
 
 @subscriptions.command("list")
-@click.option("--sort", type=click.Choice(["title", "updated", "articles"]), default="title",
+@click.option("--sort", type=click.Choice(["title", "updated", "articles", "rating"]), default="title",
               help="Sort subscriptions by field")
 @click.option("--width", type=int, default=60,
               help="Limit the width of the feed title column")
@@ -196,18 +197,15 @@ def list_subscriptions(ctx, sort, width):
     elif sort == "updated":
         feeds = db_session.query(Feed).order_by(Feed.last_updated.desc()).all()
     elif sort == "articles":
-        # This is more complex as it requires counting articles per feed
-        feeds = db_session.query(Feed).all()
-        
-        # Add article count for each feed
-        feeds_with_counts = []
-        for feed in feeds:
-            article_count = db_session.query(Article).filter_by(feed_id=feed.id).count()
-            feeds_with_counts.append((feed, article_count))
-        
         # Sort by article count
-        feeds_with_counts.sort(key=lambda x: x[1], reverse=True)
-        feeds = [f[0] for f in feeds_with_counts]
+        feeds = db_session.query(Feed).order_by(Feed.article_count.desc()).all()
+    elif sort == "rating":
+        # Sort by average quality score (None values last)
+        feeds = db_session.query(Feed).order_by(
+            # This puts NULL values at the end
+            Feed.avg_quality_score.is_(None),
+            Feed.avg_quality_score.desc()
+        ).all()
     
     # Display feeds
     if not feeds:
@@ -239,11 +237,13 @@ def list_subscriptions(ctx, sort, width):
     table.add_column("Feed", width=feed_width, no_wrap=False)
     table.add_column("Status", width=status_width)
     table.add_column("Articles", justify="right", width=articles_width)
+    table.add_column("Rating", justify="center", width=10)
     table.add_column("Last Updated", width=date_width)
     table.add_column("Domain", style="dim", width=domain_width, no_wrap=True)
     
     for feed in feeds:
-        article_count = db_session.query(Article).filter_by(feed_id=feed.id).count()
+        # Use stored article count instead of querying each time
+        article_count = feed.article_count or 0
         last_updated = feed.last_updated.strftime("%Y-%m-%d") if feed.last_updated else "Never"
         
         # Create status column with muted and peer-through indicators
@@ -253,6 +253,30 @@ def list_subscriptions(ctx, sort, width):
         if feed.peer_through:
             status_parts.append("[green]PT[/green]")
         status = " ".join(status_parts) if status_parts else ""
+        
+        # Prepare rating display
+        rating_display = ""
+        if feed.quality_tier_counts:
+            try:
+                tier_counts = json.loads(feed.quality_tier_counts)
+                # Find the highest tier with at least one article
+                for tier in ["S", "A", "B", "C", "D"]:
+                    if tier in tier_counts and tier_counts[tier] > 0:
+                        # Determine color based on tier
+                        if tier in ["S", "A"]:
+                            color = "green"
+                        elif tier == "B":
+                            color = "yellow"
+                        else:
+                            color = "red"
+                        rating_display = f"[bold {color}]{tier}[/bold {color}]"
+                        break
+                
+                # Add avg score if available
+                if feed.avg_quality_score is not None:
+                    rating_display += f" {int(feed.avg_quality_score)}"
+            except json.JSONDecodeError:
+                pass
         
         # Extract domain name from feed URL
         import re
@@ -295,6 +319,7 @@ def list_subscriptions(ctx, sort, width):
             feed_title,
             status,
             str(article_count),
+            rating_display,
             last_updated,
             domain
         )

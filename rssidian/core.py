@@ -263,6 +263,13 @@ class RSSProcessor:
             "with_embedding": 0
         }
         
+        # Track feed statistics updates
+        feed_stats = defaultdict(lambda: {
+            "new_articles": 0,
+            "quality_tiers": defaultdict(int),
+            "quality_scores": []
+        })
+        
         # Process articles in batches using Rich progress bar
         with Progress(
             SpinnerColumn(),
@@ -313,13 +320,61 @@ class RSSProcessor:
                     article.processed_at = datetime.utcnow()
                     stats["articles_processed"] += 1
                     
+                    # Track statistics for this feed
+                    feed_id = article.feed_id
+                    feed_stats[feed_id]["new_articles"] += 1
+                    if article.quality_tier:
+                        feed_stats[feed_id]["quality_tiers"][article.quality_tier] += 1
+                    if article.quality_score:
+                        feed_stats[feed_id]["quality_scores"].append(article.quality_score)
+                    
                     # Save after each article in case of errors
                     self.db_session.commit()
                     
                     # Update progress
                     progress.update(overall_task, advance=1)
         
+        # Update feed statistics
+        self._update_feed_statistics(feed_stats)
+        
         return stats
+    
+    def _update_feed_statistics(self, feed_stats: Dict[int, Dict[str, Any]]):
+        """
+        Update feed statistics with processed article data.
+        
+        Args:
+            feed_stats: Dictionary of feed statistics keyed by feed_id
+        """
+        for feed_id, stats in feed_stats.items():
+            feed = self.db_session.query(Feed).filter_by(id=feed_id).first()
+            if not feed:
+                continue
+            
+            # Update article count
+            feed.article_count = (feed.article_count or 0) + stats["new_articles"]
+            
+            # Update quality tier counts
+            current_tier_counts = {}
+            if feed.quality_tier_counts:
+                try:
+                    current_tier_counts = json.loads(feed.quality_tier_counts)
+                except json.JSONDecodeError:
+                    current_tier_counts = {}
+            
+            # Merge current and new tier counts
+            for tier, count in stats["quality_tiers"].items():
+                current_tier_counts[tier] = current_tier_counts.get(tier, 0) + count
+            feed.quality_tier_counts = json.dumps(current_tier_counts)
+            
+            # Update average quality score
+            if stats["quality_scores"]:
+                current_total = (feed.avg_quality_score or 0) * (feed.article_count - stats["new_articles"] or 0)
+                new_total = current_total + sum(stats["quality_scores"])
+                feed.avg_quality_score = new_total / feed.article_count if feed.article_count > 0 else None
+        
+        # Commit changes
+        self.db_session.commit()
     
     def search(self, query: str, relevance_threshold: float = 0.6, max_results: int = 20, refresh: bool = False) -> List[Dict[str, Any]]:
         """

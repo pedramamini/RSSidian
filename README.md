@@ -16,6 +16,7 @@ RSSidian is a powerful tool that bridges your RSS feed subscriptions with Obsidi
   - SQLite3 database for article metadata and full content
   - Annoy vector index for fast semantic search
   - Vector embeddings for efficient content discovery
+  - Feed statistics tracking (article count, quality ratings)
   - Configurable Obsidian markdown export
 - **AI-Powered Analysis**: 
   - Uses OpenRouter to generate customized summaries and insights
@@ -172,6 +173,8 @@ rssidian export-opml path/to/export.opml --exclude-muted  # Export only active f
 # Manage feed subscriptions
 rssidian subscriptions list              # List all subscriptions (sorted alphabetically)
 rssidian subscriptions list --sort=articles  # List all subscriptions (sorted by article count)
+rssidian subscriptions list --sort=rating    # List all subscriptions (sorted by quality rating)
+rssidian subscriptions list --sort=updated   # List all subscriptions (sorted by last update date)
 rssidian subscriptions mute "Feed Title"    # Mute a feed (skip during ingestion)
 rssidian subscriptions unmute "Feed Title"  # Unmute a feed
 
