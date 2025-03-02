@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from .config import Config
 from .models import get_db_session, Feed, Article
 from .core import RSSProcessor
+from .mcp import ModelContextProtocol
 
 
 # Pydantic models for API
@@ -239,5 +240,161 @@ def create_api(config: Config) -> FastAPI:
         db.commit()
         
         return {"success": True, "message": f"Peer-through disabled for feed '{feed_title}'"}
+    
+    # MCP Endpoints
+    
+    # MCP - List subscriptions
+    @app.get("/api/v1/mcp/subscriptions", tags=["MCP"])
+    def mcp_list_subscriptions(db: Session = Depends(get_db)):
+        """
+        List all feed subscriptions with MCP format.
+        """
+        mcp = ModelContextProtocol(config, db)
+        return mcp.get_subscriptions()
+    
+    # MCP - List articles
+    @app.get("/api/v1/mcp/articles", tags=["MCP"])
+    def mcp_list_articles(
+        limit: int = Query(50, ge=1, le=1000),
+        offset: int = Query(0, ge=0),
+        feed_title: Optional[str] = None,
+        days_back: Optional[int] = None,
+        min_quality_tier: Optional[str] = None,
+        db: Session = Depends(get_db)
+    ):
+        """
+        List articles with MCP format and advanced filtering.
+        
+        - **limit**: Maximum number of articles to return
+        - **offset**: Number of articles to skip
+        - **feed_title**: Filter by feed title
+        - **days_back**: Only return articles from the last N days
+        - **min_quality_tier**: Minimum quality tier (S, A, B, C, D)
+        """
+        mcp = ModelContextProtocol(config, db)
+        return mcp.get_articles(limit, offset, feed_title, days_back, min_quality_tier)
+    
+    # MCP - Get article content
+    @app.get("/api/v1/mcp/articles/{article_id}/content", tags=["MCP"])
+    def mcp_get_article_content(article_id: int, db: Session = Depends(get_db)):
+        """
+        Get the full content of an article with MCP format.
+        
+        - **article_id**: ID of the article
+        """
+        mcp = ModelContextProtocol(config, db)
+        result = mcp.get_article_content(article_id)
+        
+        if "error" in result:
+            raise HTTPException(status_code=404, detail=result["error"])
+            
+        return result
+    
+    # MCP - Search articles
+    @app.get("/api/v1/mcp/search", tags=["MCP"])
+    def mcp_search_articles(
+        query: str,
+        relevance: float = Query(0.3, ge=0, le=1),
+        max_results: int = Query(20, ge=1, le=100),
+        db: Session = Depends(get_db)
+    ):
+        """
+        Search for articles using semantic search with MCP format.
+        
+        - **query**: Search query
+        - **relevance**: Minimum relevance threshold (0-1)
+        - **max_results**: Maximum number of results to return
+        """
+        mcp = ModelContextProtocol(config, db)
+        return mcp.search_articles(query, relevance, max_results)
+    
+    # MCP - Get digest
+    @app.get("/api/v1/mcp/digest", tags=["MCP"])
+    def mcp_get_digest(
+        days_back: int = Query(7, ge=1, le=90),
+        db: Session = Depends(get_db)
+    ):
+        """
+        Get a digest of high-value articles from the specified period.
+        
+        - **days_back**: Number of days to look back
+        """
+        mcp = ModelContextProtocol(config, db)
+        return mcp.get_digest(days_back)
+    
+    # MCP - Get feed stats
+    @app.get("/api/v1/mcp/feed-stats", tags=["MCP"])
+    def mcp_get_feed_stats(
+        feed_title: Optional[str] = None,
+        db: Session = Depends(get_db)
+    ):
+        """
+        Get statistics for feeds.
+        
+        - **feed_title**: Optional feed title to get stats for a specific feed
+        """
+        mcp = ModelContextProtocol(config, db)
+        result = mcp.get_feed_stats(feed_title)
+        
+        if "error" in result:
+            raise HTTPException(status_code=404, detail=result["error"])
+            
+        return result
+    
+    # MCP - Query endpoint for AI-based interaction
+    @app.post("/api/v1/mcp/query", tags=["MCP"])
+    async def mcp_query(
+        query: Dict[str, Any],
+        db: Session = Depends(get_db)
+    ):
+        """
+        Process a natural language query about RSS content.
+        
+        The query should be a JSON object with the following structure:
+        ```json
+        {
+            "query": "What are the latest articles about AI?",
+            "context": {
+                "relevance_threshold": 0.3,
+                "max_results": 20,
+                "days_back": 30
+            }
+        }
+        ```
+        
+        The context is optional and can contain parameters to customize the query.
+        """
+        # Extract query and context
+        user_query = query.get("query", "")
+        context = query.get("context", {})
+        
+        if not user_query:
+            raise HTTPException(status_code=400, detail="Query is required")
+        
+        # Extract context parameters with defaults
+        relevance_threshold = context.get("relevance_threshold", 0.3)
+        max_results = context.get("max_results", 20)
+        days_back = context.get("days_back", 30)
+        
+        # Initialize MCP
+        mcp = ModelContextProtocol(config, db)
+        
+        # Search for relevant articles
+        search_results = mcp.search_articles(user_query, relevance_threshold, max_results)
+        
+        # Get feed statistics
+        feed_stats = mcp.get_feed_stats()
+        
+        # Return comprehensive response
+        return {
+            "query": user_query,
+            "search_results": search_results,
+            "feed_stats": feed_stats,
+            "context": {
+                "relevance_threshold": relevance_threshold,
+                "max_results": max_results,
+                "days_back": days_back
+            }
+        }
     
     return app
