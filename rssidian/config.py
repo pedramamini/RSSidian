@@ -47,6 +47,17 @@ class Config:
         return self.get("obsidian", "template", "{date_range}\n\n# Feed Digest\n\n## Top Stories\n{summary_items}\n\n## Feed Statistics\n{feed_stats}")
     
     @property
+    def obsidian_filename_template(self) -> str:
+        """Get Obsidian filename template.
+        
+        Available variables:
+        - {date_range}: The date range of the digest (e.g., '2025-03-01 to 2025-03-02')
+        - {date}: Current date in YYYY-MM-DD format
+        - {datetime}: Current datetime in YYYY-MM-DD_HH-MM-SS format
+        """
+        return self.get("obsidian", "filename_template", "{date_range}")
+    
+    @property
     def db_path(self) -> str:
         """Get database path."""
         os.makedirs(os.path.dirname(DEFAULT_DB_PATH), exist_ok=True)

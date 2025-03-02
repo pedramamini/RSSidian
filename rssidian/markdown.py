@@ -51,14 +51,28 @@ def write_digest_to_obsidian(digest: Dict[str, Any], config: Config) -> Optional
         logger.error(f"Obsidian vault path does not exist: {vault_path}")
         return None
     
-    # Create directory for digests if it doesn't exist
-    digest_dir = os.path.join(vault_path, "RSS Digests")
-    os.makedirs(digest_dir, exist_ok=True)
+    # Make sure vault path exists
+    os.makedirs(vault_path, exist_ok=True)
     
-    # Create filename from date range
+    # Create filename using template
     date_range = digest["date_range"]
-    filename = sanitize_filename(date_range) + ".md"
-    file_path = os.path.join(digest_dir, filename)
+    current_date = datetime.now().strftime("%Y-%m-%d")
+    current_datetime = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    
+    # Format the filename template with available variables
+    filename_template = config.obsidian_filename_template
+    formatted_filename = filename_template.format(
+        date_range=date_range,
+        date=current_date,
+        datetime=current_datetime
+    )
+    
+    # Sanitize and add .md extension if needed
+    filename = sanitize_filename(formatted_filename)
+    if not filename.endswith(".md"):
+        filename += ".md"
+    
+    file_path = os.path.join(vault_path, filename)
     
     # Apply template
     template = config.obsidian_template
