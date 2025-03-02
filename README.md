@@ -262,6 +262,7 @@ This will display:
 - Creates digest notes in Obsidian
 - Organizes content by quality and relevance
 - Includes feed statistics and processing metrics
+- Customizable filename templates with date variables (`{from_date}`, `{to_date}`, `{date_range}`, `{date}`, `{datetime}`)
 - Enables semantic search across all content
 
 ## MCP (Model Context Protocol) Service API

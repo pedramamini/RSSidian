@@ -5,8 +5,8 @@
 vault_path = "~/Documents/Obsidian"
 
 # Template for the output filename
-# Available variables: {date_range}, {date}, {datetime}
-filename_template = "RSS Digest - {date}"
+# Available variables: {from_date}, {to_date}, {date_range}, {date}, {datetime}
+filename_template = "RSS Digest {from_date} to {to_date}"
 
 # Template for generated digest note
 # Available variables: {date_range}, {summary_items}, {value_analysis}, {feed_stats}, {aggregated_summary}

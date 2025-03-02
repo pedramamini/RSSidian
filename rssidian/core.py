@@ -582,8 +582,12 @@ class RSSProcessor:
         
         if not articles:
             logger.warning(f"No processed articles found in date range")
+            from_date_str = start_date.strftime('%Y-%m-%d')
+            to_date_str = end_date.strftime('%Y-%m-%d')
             return {
-                "date_range": f"Feed Overview from {start_date.strftime('%Y-%m-%d')} through {end_date.strftime('%Y-%m-%d')}",
+                "date_range": f"Feed Overview from {from_date_str} through {to_date_str}",
+                "from_date": from_date_str,
+                "to_date": to_date_str,
                 "summary_items": "No articles processed in this period.",
                 "feed_stats": "No data available.",
                 "articles": []
@@ -670,8 +674,14 @@ class RSSProcessor:
         for feed_name, count in sorted_feeds:
             feed_stats.append(f"- {feed_name}: {count}")
         
+        # Format dates for the digest
+        from_date_str = start_date.strftime('%Y-%m-%d')
+        to_date_str = end_date.strftime('%Y-%m-%d')
+        
         digest = {
-            "date_range": f"Feed Overview from {start_date.strftime('%Y-%m-%d')} through {end_date.strftime('%Y-%m-%d')}",
+            "date_range": f"Feed Overview from {from_date_str} through {to_date_str}",
+            "from_date": from_date_str,
+            "to_date": to_date_str,
             "summary_items": "\n\n".join(summary_items),
             "feed_stats": "\n".join(feed_stats),
             "articles": high_value_articles,

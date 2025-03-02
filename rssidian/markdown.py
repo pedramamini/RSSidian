@@ -56,6 +56,8 @@ def write_digest_to_obsidian(digest: Dict[str, Any], config: Config) -> Optional
     
     # Create filename using template
     date_range = digest["date_range"]
+    from_date = digest["from_date"]
+    to_date = digest["to_date"]
     current_date = datetime.now().strftime("%Y-%m-%d")
     current_datetime = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     
@@ -63,6 +65,8 @@ def write_digest_to_obsidian(digest: Dict[str, Any], config: Config) -> Optional
     filename_template = config.obsidian_filename_template
     formatted_filename = filename_template.format(
         date_range=date_range,
+        from_date=from_date,
+        to_date=to_date,
         date=current_date,
         datetime=current_datetime
     )
