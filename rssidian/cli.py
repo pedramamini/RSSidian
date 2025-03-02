@@ -2,7 +2,6 @@ import os
 import sys
 import json
 import click
-import uvicorn
 from datetime import datetime, timedelta
 from typing import Optional
 import logging
@@ -11,13 +10,14 @@ from rich.table import Table
 from rich.panel import Panel
 from rich import box
 
+# Only import the lightweight config module at startup
 from .config import Config, init_config
-from .models import init_db, get_db_session, Feed, Article
-from .core import RSSProcessor
-from .opml import import_feeds_from_opml, export_feeds_to_opml
-from .backup import get_backup_list, create_backup, restore_backup
-from .markdown import write_digest_to_obsidian
-from .api import create_api
+
+# Import backup functions at the top level since they're lightweight
+from .backup import create_backup, get_backup_list, restore_backup
+
+# Defer heavy imports until they're needed in specific commands
+# These will be imported within each command function
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -27,25 +27,40 @@ logger = logging.getLogger(__name__)
 console = Console()
 
 
-def ensure_db_exists(config):
-    """Ensure the database exists and is initialized."""
+def ensure_db_exists(config, initialize=True):
+    """Ensure the database exists and is initialized.
+    
+    Args:
+        config: Configuration object
+        initialize: Whether to initialize the database (default: True)
+            Set to False for commands that just need to check if the DB exists
+    """
     # Ensure the directory exists
     db_dir = os.path.dirname(config.db_path)
     if not os.path.exists(db_dir):
         console.print(f"[yellow]Creating database directory: {db_dir}[/yellow]")
         os.makedirs(db_dir, exist_ok=True)
     
-    # Always initialize the database to ensure tables exist
-    # init_db will create tables if they don't exist
+    if not initialize:
+        # For commands that just need to check if the DB exists
+        if not os.path.exists(config.db_path):
+            console.print("[yellow]Database does not exist. Run 'rssidian init' first.[/yellow]")
+            return None
+        # Import here to avoid loading at startup
+        from .models import get_db_session
+        return get_db_session(config.db_path)
+    
+    # For commands that need a fully initialized database
+    # Import here to avoid loading at startup
+    from .models import init_db, get_db_session, Base
+    from sqlalchemy import create_engine
+    
     if not os.path.exists(config.db_path):
         console.print("[yellow]Database does not exist. Creating it now...[/yellow]")
         return init_db(config.db_path)
     else:
         # Even if the DB file exists, make sure the tables are created
         # This is safe as create_all() checks if tables exist before creating
-        from sqlalchemy import create_engine
-        from .models import Base
-        
         engine = create_engine(f"sqlite:///{config.db_path}")
         Base.metadata.create_all(engine)
         return get_db_session(config.db_path)
@@ -65,7 +80,9 @@ def init():
     """Initialize configuration files and database."""
     init_config()
     
-    # Initialize database
+    # Initialize database - import here to avoid loading at startup
+    from .models import init_db
+    
     config = Config()
     db_session = init_db(config.db_path)
     db_session.close()
@@ -88,8 +105,11 @@ def import_opml(ctx, opml_file, force):
     console.print(f"Importing feeds from [bold]{opml_file}[/bold]...")
     
     try:
+        # Import modules here to avoid loading at startup
+        from .opml import parse_opml, import_feeds_from_opml
+        from .models import Feed
+        
         # Parse the OPML file first to get a count of feeds
-        from .opml import parse_opml
         feeds_data = parse_opml(opml_file)
         console.print(f"Found [bold]{len(feeds_data)}[/bold] feeds in OPML file.")
         
@@ -131,9 +151,13 @@ def import_opml(ctx, opml_file, force):
 def export_opml(ctx, output_file, include_muted):
     """Export feeds to OPML file."""
     config = ctx.obj["config"]
-    db_session = ensure_db_exists(config)
+    db_session = ensure_db_exists(config, initialize=False)
     
     try:
+        # Import modules here to avoid loading at startup
+        from .models import Feed
+        from .opml import export_feeds_to_opml
+        
         # Query feeds to get a count
         query = db_session.query(Feed)
         if not include_muted:
@@ -190,6 +214,9 @@ def list_subscriptions(ctx, sort, width):
     """List all feed subscriptions."""
     config = ctx.obj["config"]
     db_session = ensure_db_exists(config)
+    
+    # Import models here
+    from .models import Feed
     
     # Query feeds with different sorting
     if sort == "title":
@@ -337,6 +364,9 @@ def mute_subscription(ctx, feed_title):
     config = ctx.obj["config"]
     db_session = ensure_db_exists(config)
     
+    # Import models here
+    from .models import Feed
+    
     # Find feed by title
     feed = db_session.query(Feed).filter(Feed.title.like(f"%{feed_title}%")).first()
     
@@ -358,6 +388,9 @@ def unmute_subscription(ctx, feed_title):
     """Unmute a feed subscription."""
     config = ctx.obj["config"]
     db_session = ensure_db_exists(config)
+    
+    # Import models here
+    from .models import Feed
     
     # Find feed by title
     feed = db_session.query(Feed).filter(Feed.title.like(f"%{feed_title}%")).first()
@@ -426,6 +459,10 @@ def ingest(ctx, lookback, debug):
     config = ctx.obj["config"]
     db_session = ensure_db_exists(config)
     
+    # Import modules only when needed
+    from .core import RSSProcessor
+    from .markdown import write_digest_to_obsidian
+    
     processor = RSSProcessor(config, db_session)
     
     try:
@@ -476,6 +513,9 @@ def search(ctx, query, relevance, refresh):
     """Search through article content using natural language."""
     config = ctx.obj["config"]
     db_session = ensure_db_exists(config)
+    
+    # Import processor only when needed
+    from .core import RSSProcessor
     
     processor = RSSProcessor(config, db_session)
     
@@ -544,6 +584,10 @@ def mcp(ctx, port, host, stdio):
         run_stdio_server(config)
     else:
         # Run as HTTP server
+        # Import modules only when needed
+        import uvicorn
+        from .api import create_api
+        
         # Create the FastAPI app
         app = create_api(config)
         
@@ -662,6 +706,9 @@ def show_config(ctx):
     """Show current configuration and system status."""
     config = ctx.obj["config"]
     db_session = ensure_db_exists(config)
+    
+    # Import database models here
+    from .models import Article, Feed
     
     # Database stats
     article_count = db_session.query(Article).count()
