@@ -13,7 +13,7 @@ from rich import box
 from .config import Config, init_config
 from .models import init_db, get_db_session, Feed, Article
 from .core import RSSProcessor
-from .opml import import_feeds_from_opml
+from .opml import import_feeds_from_opml, export_feeds_to_opml
 from .backup import get_backup_list, create_backup, restore_backup
 from .markdown import write_digest_to_obsidian
 from .api import create_api
@@ -118,6 +118,57 @@ def import_opml(ctx, opml_file, force):
         
     except Exception as e:
         console.print(f"[bold red]Error importing feeds:[/bold red] {str(e)}")
+    finally:
+        db_session.close()
+
+
+@cli.command("export-opml")
+@click.argument("output_file", type=click.Path())
+@click.option("--include-muted/--exclude-muted", default=True, 
+              help="Include or exclude muted feeds in the export")
+@click.pass_context
+def export_opml(ctx, output_file, include_muted):
+    """Export feeds to OPML file."""
+    config = ctx.obj["config"]
+    db_session = ensure_db_exists(config)
+    
+    try:
+        # Query feeds to get a count
+        query = db_session.query(Feed)
+        if not include_muted:
+            query = query.filter_by(muted=False)
+        
+        feeds_count = query.count()
+        
+        if feeds_count == 0:
+            console.print("[bold yellow]No feeds to export.[/bold yellow]")
+            db_session.close()
+            return
+        
+        # Generate OPML content
+        opml_content = export_feeds_to_opml(db_session, include_muted)
+        
+        # Write to file
+        with open(output_file, "w", encoding="utf-8") as f:
+            f.write(opml_content)
+        
+        # Show summary
+        summary_table = Table(show_header=False, box=box.SIMPLE)
+        summary_table.add_column("Statistic", style="cyan")
+        summary_table.add_column("Value")
+        
+        summary_table.add_row("Exported feeds", f"[green]{feeds_count}[/green]")
+        summary_table.add_row("Output file", f"[bold]{output_file}[/bold]")
+        summary_table.add_row("Included muted feeds", f"[{'green' if include_muted else 'yellow'}]{include_muted}[/{'green' if include_muted else 'yellow'}]")
+        
+        console.print(Panel.fit(
+            "[bold green]Export Successful[/bold green]", 
+            border_style="green"
+        ))
+        console.print(summary_table)
+        
+    except Exception as e:
+        console.print(f"[bold red]Error exporting feeds:[/bold red] {str(e)}")
     finally:
         db_session.close()
 
@@ -457,13 +508,13 @@ def search(ctx, query, relevance, refresh):
 @click.option("--host", type=str, default="127.0.0.1", help="Host to bind the API server to")
 @click.pass_context
 def mcp(ctx, port, host):
-    """Start the MCP (Message Control Program) API service."""
+    """Start the MCP (Model Context Protocol) API service."""
     config = ctx.obj["config"]
     
     # Create the FastAPI app
     app = create_api(config)
     
-    click.echo(f"Starting MCP service on http://{host}:{port}")
+    click.echo(f"Starting MCP (Model Context Protocol) service on http://{host}:{port}")
     click.echo("Press Ctrl+C to stop")
     
     # Run uvicorn server

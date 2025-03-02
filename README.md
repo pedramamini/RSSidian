@@ -34,7 +34,7 @@ RSSidian is a powerful tool that bridges your RSS feed subscriptions with Obsidi
   - Configurable relevance threshold for fine-tuning results
   - Results grouped by feed with relevant excerpts
 - **Obsidian Integration**: Generates markdown notes with customizable templates
-- **MCP Service API**: Exposes a Message Control Program service for AI agents
+- **MCP Service API**: Exposes a Model Context Protocol service for AI agents
 
 ## Installation
 
@@ -165,6 +165,10 @@ rssidian show-config    # Displays config, vector index status, and article stat
 # Import OPML file with subscriptions
 rssidian import path/to/subscriptions.opml
 
+# Export feeds to OPML file
+rssidian export-opml path/to/export.opml                # Export all feeds including muted ones
+rssidian export-opml path/to/export.opml --exclude-muted  # Export only active feeds (exclude muted)
+
 # Manage feed subscriptions
 rssidian subscriptions list              # List all subscriptions (sorted alphabetically)
 rssidian subscriptions list --sort=articles  # List all subscriptions (sorted by article count)
@@ -186,7 +190,7 @@ rssidian search "meditation techniques for beginners" --relevance 75
 # Force refresh of search index before searching
 rssidian search "blockchain" --refresh
 
-# Start the MCP service
+# Start the MCP (Model Context Protocol) service
 rssidian mcp --port 8080
 ```
 
@@ -236,6 +240,7 @@ This will display:
 
 ### Feed Management:
 - Imports feed URLs from OPML file
+- Exports feeds to OPML file (with option to include/exclude muted feeds)
 - Stores subscription data in SQLite database
 - Enables muting/unmuting of specific feeds
 
@@ -257,7 +262,7 @@ This will display:
 - Includes feed statistics and processing metrics
 - Enables semantic search across all content
 
-## MCP Service API
+## MCP (Model Context Protocol) Service API
 
 RESTful API for AI agent integration:
 

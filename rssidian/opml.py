@@ -94,3 +94,62 @@ def import_feeds_from_opml(file_path: str, db_session: Session) -> Tuple[int, in
             # Continue with the next feed
     
     return new_count, updated_count
+
+
+def export_feeds_to_opml(db_session: Session, include_muted: bool = True) -> str:
+    """
+    Export feeds from the database to OPML format.
+    
+    Args:
+        db_session: SQLAlchemy database session
+        include_muted: Whether to include muted feeds in the export
+        
+    Returns:
+        OPML content as a string
+    """
+    # Create the OPML structure
+    root = ET.Element("opml")
+    root.set("version", "2.0")
+    
+    # Add the head element
+    head = ET.SubElement(root, "head")
+    title = ET.SubElement(head, "title")
+    title.text = "RSSidian Feed Export"
+    date_created = ET.SubElement(head, "dateCreated")
+    date_created.text = datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S %z")
+    
+    # Add the body element
+    body = ET.SubElement(root, "body")
+    
+    # Query feeds from the database
+    query = db_session.query(Feed)
+    if not include_muted:
+        query = query.filter_by(muted=False)
+    
+    feeds = query.order_by(Feed.title).all()
+    
+    # Add feeds to the OPML file
+    for feed in feeds:
+        outline = ET.SubElement(body, "outline")
+        outline.set("text", feed.title)
+        outline.set("title", feed.title)
+        outline.set("type", "rss")
+        outline.set("xmlUrl", feed.url)
+        
+        if feed.website_url:
+            outline.set("htmlUrl", feed.website_url)
+        
+        if feed.description:
+            outline.set("description", feed.description)
+        
+        # Add custom attributes for RSSidian-specific features
+        if feed.muted:
+            outline.set("muted", "true")
+            if feed.muted_reason:
+                outline.set("mutedReason", feed.muted_reason)
+        
+        if feed.peer_through:
+            outline.set("peerThrough", "true")
+    
+    # Convert the XML to a string
+    return ET.tostring(root, encoding="unicode", method="xml")
