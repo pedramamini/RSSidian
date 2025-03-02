@@ -672,6 +672,18 @@ def show_config(ctx):
         "D": db_session.query(Article).filter_by(quality_tier="D").count(),
     }
     
+    # Get vector index size
+    vector_index_size_bytes = 0
+    vector_index_size_human = "Not found"
+    if os.path.exists(config.annoy_index_path):
+        vector_index_size_bytes = os.path.getsize(config.annoy_index_path)
+        # Convert to human-readable format
+        for unit in ['B', 'KB', 'MB', 'GB']:
+            if vector_index_size_bytes < 1024.0 or unit == 'GB':
+                vector_index_size_human = f"{vector_index_size_bytes:.2f} {unit}"
+                break
+            vector_index_size_bytes /= 1024.0
+    
     # Configuration info
     console.print(Panel.fit(
         "[bold blue]RSSidian Configuration[/bold blue]", 
@@ -686,6 +698,7 @@ def show_config(ctx):
     config_table.add_row("Database path", config.db_path)
     config_table.add_row("Obsidian vault", config.obsidian_vault_path)
     config_table.add_row("Vector index", config.annoy_index_path)
+    config_table.add_row("Vector index size", vector_index_size_human)
     config_table.add_row(
         "OpenRouter API", 
         "[green]Configured[/green]" if config.openrouter_api_key else "[red]Not configured[/red]"
@@ -722,6 +735,7 @@ def show_config(ctx):
     tier_table = Table(box=box.SIMPLE)
     tier_table.add_column("Tier", style="bold")
     tier_table.add_column("Count", justify="right")
+    tier_table.add_column("% of Total", justify="right")
     
     tier_colors = {
         "S": "bright_green",
@@ -731,11 +745,16 @@ def show_config(ctx):
         "D": "bright_red"
     }
     
+    # Calculate total articles with quality tiers
+    total_quality_articles = sum(quality_counts.values())
+    
     for tier in ["S", "A", "B", "C", "D"]:
         count = quality_counts[tier]
+        percentage = (count / total_quality_articles * 100) if total_quality_articles > 0 else 0
         tier_table.add_row(
             f"[{tier_colors[tier]}]{tier}[/{tier_colors[tier]}]",
-            str(count)
+            str(count),
+            f"{percentage:.1f}%"
         )
     
     console.print(tier_table)
