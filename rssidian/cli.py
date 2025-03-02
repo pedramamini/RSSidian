@@ -213,6 +213,24 @@ def list_subscriptions(ctx, sort, width):
                 domain = parsed_url.netloc
                 # Remove www. prefix if present
                 domain = re.sub(r'^www\.', '', domain)
+                
+                # Special handling for domains that benefit from path inclusion
+                path_domains = ["medium.com", "github.com", "substack.com", "wordpress.com", "blogspot.com", "feeds.feedburner.com"]
+                
+                if domain in path_domains and parsed_url.path:
+                    path_parts = parsed_url.path.strip('/').split('/')
+                    if path_parts and path_parts[0]:
+                        # Skip feed, rss, atom in path
+                        first_segment = path_parts[0]
+                        if first_segment.lower() in ["feed", "rss", "atom", "feeds"]:
+                            if len(path_parts) > 1:
+                                first_segment = path_parts[1]
+                            else:
+                                first_segment = ""
+                                
+                        if first_segment:
+                            domain = f"{domain}/{first_segment}"
+                
                 # Truncate very long domains if needed
                 if len(domain) > domain_width - 3 and domain_width > 5:
                     domain = domain[:domain_width-3] + "..."
