@@ -376,7 +376,7 @@ class RSSProcessor:
         # Commit changes
         self.db_session.commit()
     
-    def search(self, query: str, relevance_threshold: float = 0.6, max_results: int = 20, refresh: bool = False) -> List[Dict[str, Any]]:
+    def search(self, query: str, relevance_threshold: float = 0.3, max_results: int = 20, refresh: bool = False) -> List[Dict[str, Any]]:
         """
         Search for articles using semantic search.
         

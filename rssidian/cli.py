@@ -469,7 +469,7 @@ def ingest(ctx, lookback, debug):
 
 @cli.command()
 @click.argument("query")
-@click.option("--relevance", type=float, default=0.6, help="Minimum relevance threshold (0-1)")
+@click.option("--relevance", type=float, default=0.3, help="Minimum relevance threshold (0-1)")
 @click.option("--refresh/--no-refresh", default=False, help="Refresh search index before searching")
 @click.pass_context
 def search(ctx, query, relevance, refresh):
