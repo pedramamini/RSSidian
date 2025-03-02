@@ -8,6 +8,7 @@ import logging
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
+from rich.progress import Progress, TextColumn, BarColumn, SpinnerColumn, TimeElapsedColumn, TimeRemainingColumn, TaskProgressColumn
 from rich import box
 
 # Only import the lightweight config module at startup
@@ -522,19 +523,41 @@ def search(ctx, query, relevance, refresh):
     
     # Import processor only when needed
     from .core import RSSProcessor
+    import os
+    
+    # Set logging level based on DEBUG environment variable
+    if not os.environ.get("DEBUG"):
+        import logging
+        logging.getLogger("rssidian.core").setLevel(logging.ERROR)
+        logging.getLogger("sentence_transformers").setLevel(logging.ERROR)
     
     processor = RSSProcessor(config, db_session)
     
     try:
-        results = processor.search(query, relevance_threshold=relevance, refresh=refresh)
+        # Create a progress bar for the search process
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[bold blue]Searching..."),
+            BarColumn(),
+            TaskProgressColumn(),
+            TimeElapsedColumn(),
+            refresh_per_second=10,
+        ) as progress:
+            # Add a task for the search process
+            task = progress.add_task("[cyan]Searching...", total=1)
+            
+            # Perform the search
+            results = processor.search(query, relevance_threshold=relevance, refresh=refresh)
+            
+            # Complete the progress bar
+            progress.update(task, completed=1)
         
         if not results:
-            click.echo("No matching articles found.")
+            console.print("[yellow]No matching articles found.[/yellow]")
             db_session.close()
             return
         
-        click.echo(f"Found {len(results)} matching articles:")
-        click.echo()
+        console.print(f"[bold green]Found {len(results)} matching articles:[/bold green]\n")
         
         # Group results by feed
         feeds = {}
@@ -546,30 +569,66 @@ def search(ctx, query, relevance, refresh):
         
         # Display results grouped by feed
         for feed, feed_results in feeds.items():
-            click.echo(f"## {feed}")
-            click.echo()
+            console.print(f"[bold cyan]{feed}[/bold cyan]")
+            console.print("[dim]" + "─" * len(feed) + "[/dim]\n")
             
             for result in feed_results:
                 title = result["title"]
                 published = result["published_at"].strftime("%Y-%m-%d") if result["published_at"] else "Unknown date"
                 relevance_pct = int(result["relevance"] * 100)
-                quality = f"{result['quality_tier']}-Tier" if result["quality_tier"] else ""
                 
-                click.echo(f"### {title}")
-                click.echo(f"*{published} | Relevance: {relevance_pct}% | {quality}*")
-                click.echo(f"URL: {result['url']}")
-                click.echo()
+                # Format quality tier with appropriate color
+                quality_tier = result["quality_tier"]
+                if quality_tier:
+                    tier_colors = {
+                        "S": "bright_magenta",
+                        "A": "green",
+                        "B": "blue",
+                        "C": "yellow",
+                        "D": "red"
+                    }
+                    color = tier_colors.get(quality_tier, "white")
+                    quality = f"[bold {color}]{quality_tier}-Tier[/bold {color}]" 
+                else:
+                    quality = ""
                 
+                # Format relevance with color based on percentage
+                if relevance_pct >= 80:
+                    relevance_str = f"[bold green]Relevance: {relevance_pct}%[/bold green]"
+                elif relevance_pct >= 60:
+                    relevance_str = f"[green]Relevance: {relevance_pct}%[/green]"
+                elif relevance_pct >= 40:
+                    relevance_str = f"[yellow]Relevance: {relevance_pct}%[/yellow]"
+                else:
+                    relevance_str = f"[dim]Relevance: {relevance_pct}%[/dim]"
+                
+                # Print title and metadata
+                console.print(f"[bold]{title}[/bold]")
+                console.print(f"[dim]{published}[/dim] | {relevance_str} | {quality}")
+                console.print(f"[blue underline]{result['url']}[/blue underline]\n")
+                
+                # Print excerpt if available
                 if result["excerpt"]:
-                    click.echo(f"Excerpt: {result['excerpt']}")
-                    click.echo()
+                    console.print(Panel.fit(
+                        result["excerpt"],
+                        title="[bold]Excerpt[/bold]",
+                        border_style="dim",
+                        padding=(0, 1)
+                    ))
                 
+                # Print summary if available
                 if result["summary"]:
-                    click.echo(f"Summary: {result['summary']}")
-                    click.echo()
+                    console.print(Panel.fit(
+                        result["summary"],
+                        title="[bold]Summary[/bold]",
+                        border_style="dim",
+                        padding=(0, 1)
+                    ))
+                
+                console.print()
     
     except Exception as e:
-        click.echo(f"Error during search: {str(e)}", err=True)
+        console.print(f"[bold red]Error during search:[/bold red] {str(e)}")
     finally:
         db_session.close()
 

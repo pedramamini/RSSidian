@@ -1,22 +1,21 @@
 #!/bin/bash
-# Setup development environment for RSSidian
-
 set -e
 
-# Create and activate virtual environment
-if [ ! -d .venv ]; then
+# Ensure we're in the project root
+cd "$(dirname "$0")/.."
+
+# Create venv if it doesn't exist
+if [ ! -d ".venv" ]; then
     echo "Creating virtual environment..."
-    python -m venv .venv
+    uv venv
 fi
 
 # Activate virtual environment
 source .venv/bin/activate
 
-# Install dependencies
+# Install dependencies with uv
 echo "Installing dependencies..."
-pip install hatch
-pip install -e .
+uv pip install -e ".[dev]"
 
 echo "Development environment setup complete!"
-echo "Activate with: source .venv/bin/activate"
-echo "Run with: rssidian [command]"
+echo "To activate the environment, run: source .venv/bin/activate"
