@@ -147,6 +147,11 @@ Content:
         """Get backup directory."""
         os.makedirs(DEFAULT_BACKUP_DIR, exist_ok=True)
         return DEFAULT_BACKUP_DIR
+        
+    @property
+    def analyze_during_ingestion(self) -> bool:
+        """Check if content should be analyzed during ingestion."""
+        return self.get("feeds", "analyze_during_ingestion", True)
 
 
 def init_config() -> None:

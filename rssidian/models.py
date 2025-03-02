@@ -54,6 +54,7 @@ class Article(Base):
     labels = Column(String(255), nullable=True)
     embedding_generated = Column(Boolean, default=False)
     word_count = Column(Integer, nullable=True)
+    jina_enhanced = Column(Boolean, default=False)  # Flag to indicate if content was fetched from Jina.ai
     
     # Relationships
     feed = relationship("Feed", back_populates="articles")

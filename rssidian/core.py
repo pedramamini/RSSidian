@@ -70,7 +70,9 @@ class RSSProcessor:
             lookback_days=lookback,
             max_articles_per_feed=self.config.max_articles_per_feed,
             max_errors=5,  # Maximum number of consecutive errors before marking feed as inactive
-            retry_attempts=3  # Number of retry attempts for transient errors
+            retry_attempts=3,  # Number of retry attempts for transient errors
+            config=self.config,  # Pass the config for article analysis
+            analyze_content=self.config.analyze_during_ingestion  # Whether to analyze during ingestion
         )
     
     def _call_openrouter_api(self, prompt: str, model: Optional[str] = None) -> Optional[str]:

@@ -478,6 +478,7 @@ def show_config(ctx):
     muted_feed_count = db_session.query(Feed).filter_by(muted=True).count()
     processed_article_count = db_session.query(Article).filter_by(processed=True).count()
     with_embedding_count = db_session.query(Article).filter_by(embedding_generated=True).count()
+    jina_enhanced_count = db_session.query(Article).filter_by(jina_enhanced=True).count()
     
     # Quality tier stats
     quality_counts = {
@@ -525,6 +526,7 @@ def show_config(ctx):
     stats_table.add_row("Total articles", str(article_count))
     stats_table.add_row("Processed articles", str(processed_article_count))
     stats_table.add_row("Articles with embeddings", str(with_embedding_count))
+    stats_table.add_row("Jina.ai enhanced articles", str(jina_enhanced_count))
     
     console.print(stats_table)
     
