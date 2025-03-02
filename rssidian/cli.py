@@ -470,6 +470,10 @@ def ingest(ctx, lookback, debug):
     from .core import RSSProcessor
     from .markdown import write_digest_to_obsidian
     
+    # Suppress RSS module logs unless debug is enabled
+    if not debug and not os.environ.get("DEBUG"):
+        logging.getLogger("rssidian.rss").setLevel(logging.WARNING)
+    
     processor = RSSProcessor(config, db_session)
     
     try:
