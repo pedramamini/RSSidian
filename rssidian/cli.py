@@ -131,8 +131,10 @@ def subscriptions():
 @subscriptions.command("list")
 @click.option("--sort", type=click.Choice(["title", "updated", "articles"]), default="title",
               help="Sort subscriptions by field")
+@click.option("--width", type=int, default=60,
+              help="Limit the width of the feed title column")
 @click.pass_context
-def list_subscriptions(ctx, sort):
+def list_subscriptions(ctx, sort, width):
     """List all feed subscriptions."""
     config = ctx.obj["config"]
     db_session = ensure_db_exists(config)
@@ -167,22 +169,65 @@ def list_subscriptions(ctx, sort):
     
     # Create a table for better visualization
     table = Table(show_header=True, header_style="bold magenta", box=box.ROUNDED)
-    table.add_column("Feed")
-    table.add_column("Articles", justify="right")
-    table.add_column("Last Updated")
-    table.add_column("URL", style="dim")
+    
+    # Set row styles for alternating colors with background
+    table.row_styles = ["none", "on dark_green"]
+    
+    # Get terminal width for better column sizing
+    import shutil
+    terminal_width = shutil.get_terminal_size().columns
+    
+    # Calculate column widths based on terminal width
+    domain_width = min(30, max(15, int(terminal_width * 0.2)))
+    status_width = 10
+    articles_width = 8
+    date_width = 12
+    feed_width = min(width, terminal_width - domain_width - status_width - articles_width - date_width - 10)  # 10 for padding and borders
+    
+    # Add columns with appropriate width constraints
+    table.add_column("Feed", width=feed_width, no_wrap=False)
+    table.add_column("Status", width=status_width)
+    table.add_column("Articles", justify="right", width=articles_width)
+    table.add_column("Last Updated", width=date_width)
+    table.add_column("Domain", style="dim", width=domain_width, no_wrap=True)
     
     for feed in feeds:
         article_count = db_session.query(Article).filter_by(feed_id=feed.id).count()
-        muted_status = "[dim italic]MUTED[/dim italic] " if feed.muted else ""
         last_updated = feed.last_updated.strftime("%Y-%m-%d") if feed.last_updated else "Never"
         
-        feed_title = f"{muted_status}{feed.title}"
+        # Create status column with muted and peer-through indicators
+        status_parts = []
+        if feed.muted:
+            status_parts.append("[dim italic]MUTED[/dim italic]")
+        if feed.peer_through:
+            status_parts.append("[green]PT[/green]")
+        status = " ".join(status_parts) if status_parts else ""
+        
+        # Extract domain name from feed URL
+        import re
+        from urllib.parse import urlparse
+        domain = ""
+        if feed.url:
+            try:
+                parsed_url = urlparse(feed.url)
+                domain = parsed_url.netloc
+                # Remove www. prefix if present
+                domain = re.sub(r'^www\.', '', domain)
+                # Truncate very long domains if needed
+                if len(domain) > domain_width - 3 and domain_width > 5:
+                    domain = domain[:domain_width-3] + "..."
+            except:
+                domain = "unknown"
+                
+        # Prepare feed title - no need to truncate as the Rich table will handle it with ellipsis
+        feed_title = feed.title
+        
         table.add_row(
             feed_title,
+            status,
             str(article_count),
             last_updated,
-            feed.url
+            domain
         )
     
     console.print(table)
@@ -231,6 +276,50 @@ def unmute_subscription(ctx, feed_title):
     feed.muted = False
     db_session.commit()
     click.echo(f"Unmuted feed: {feed.title}")
+    db_session.close()
+
+
+@subscriptions.command("enable-peer-through")
+@click.argument("feed_title")
+@click.pass_context
+def enable_peer_through(ctx, feed_title):
+    """Enable peer-through for an aggregator feed to fetch origin article content."""
+    config = ctx.obj["config"]
+    db_session = ensure_db_exists(config)
+    
+    # Find feed by title
+    feed = db_session.query(Feed).filter(Feed.title.like(f"%{feed_title}%")).first()
+    
+    if not feed:
+        click.echo(f"No feed found matching title: {feed_title}", err=True)
+        db_session.close()
+        return
+    
+    feed.peer_through = True
+    db_session.commit()
+    click.echo(f"Enabled peer-through for feed: {feed.title}")
+    db_session.close()
+
+
+@subscriptions.command("disable-peer-through")
+@click.argument("feed_title")
+@click.pass_context
+def disable_peer_through(ctx, feed_title):
+    """Disable peer-through for a feed."""
+    config = ctx.obj["config"]
+    db_session = ensure_db_exists(config)
+    
+    # Find feed by title
+    feed = db_session.query(Feed).filter(Feed.title.like(f"%{feed_title}%")).first()
+    
+    if not feed:
+        click.echo(f"No feed found matching title: {feed_title}", err=True)
+        db_session.close()
+        return
+    
+    feed.peer_through = False
+    db_session.commit()
+    click.echo(f"Disabled peer-through for feed: {feed.title}")
     db_session.close()
 
 

@@ -18,6 +18,7 @@ class FeedResponse(BaseModel):
     website_url: Optional[str] = None
     last_updated: Optional[str] = None
     muted: bool
+    peer_through: bool
 
 
 class ArticleResponse(BaseModel):
@@ -165,7 +166,8 @@ def create_api(config: Config) -> FastAPI:
                 "description": feed.description,
                 "website_url": feed.website_url,
                 "last_updated": feed.last_updated.isoformat() if feed.last_updated else None,
-                "muted": feed.muted
+                "muted": feed.muted,
+                "peer_through": feed.peer_through
             })
         
         return response
@@ -203,5 +205,39 @@ def create_api(config: Config) -> FastAPI:
         db.commit()
         
         return {"success": True, "message": f"Feed '{feed_title}' has been unmuted"}
+    
+    # Enable peer-through for a feed
+    @app.post("/api/v1/subscriptions/{feed_title}/enable-peer-through", response_model=SuccessResponse, tags=["Subscriptions"])
+    def enable_peer_through(feed_title: str, db: Session = Depends(get_db)):
+        """
+        Enable peer-through for an aggregator feed to fetch origin article content.
+        
+        - **feed_title**: Title of the feed
+        """
+        feed = db.query(Feed).filter_by(title=feed_title).first()
+        if not feed:
+            raise HTTPException(status_code=404, detail="Feed not found")
+        
+        feed.peer_through = True
+        db.commit()
+        
+        return {"success": True, "message": f"Peer-through enabled for feed '{feed_title}'"}
+    
+    # Disable peer-through for a feed
+    @app.post("/api/v1/subscriptions/{feed_title}/disable-peer-through", response_model=SuccessResponse, tags=["Subscriptions"])
+    def disable_peer_through(feed_title: str, db: Session = Depends(get_db)):
+        """
+        Disable peer-through for a feed.
+        
+        - **feed_title**: Title of the feed
+        """
+        feed = db.query(Feed).filter_by(title=feed_title).first()
+        if not feed:
+            raise HTTPException(status_code=404, detail="Feed not found")
+        
+        feed.peer_through = False
+        db.commit()
+        
+        return {"success": True, "message": f"Peer-through disabled for feed '{feed_title}'"}
     
     return app

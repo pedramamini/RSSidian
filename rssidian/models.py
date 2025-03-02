@@ -21,6 +21,7 @@ class Feed(Base):
     last_checked = Column(DateTime, default=datetime.utcnow)
     muted = Column(Boolean, default=False)
     muted_reason = Column(Text, nullable=True)  # Reason for muting the feed
+    peer_through = Column(Boolean, default=False)  # Whether to peer through aggregator to origin article
     error_count = Column(Integer, default=0)  # Count of consecutive errors
     no_entries_count = Column(Integer, default=0)  # Count of consecutive checks with no entries
     last_error = Column(Text, nullable=True)
@@ -29,7 +30,7 @@ class Feed(Base):
     articles = relationship("Article", back_populates="feed", cascade="all, delete-orphan")
 
     def __repr__(self) -> str:
-        return f"<Feed(id={self.id}, title='{self.title}', muted={self.muted})>"
+        return f"<Feed(id={self.id}, title='{self.title}', muted={self.muted}, peer_through={self.peer_through})>"
 
 
 class Article(Base):

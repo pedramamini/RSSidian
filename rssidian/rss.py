@@ -276,6 +276,38 @@ def fetch_jina_content(url: str) -> Optional[str]:
         return None
 
 
+def extract_origin_url(description: str) -> Optional[str]:
+    """Extract the origin article URL from a feed description.
+    
+    Args:
+        description: The description text from the feed entry
+        
+    Returns:
+        The origin URL if found, None otherwise
+    """
+    if not description:
+        return None
+    
+    # Common patterns for finding URLs in descriptions
+    # Pattern for <a href="URL">...
+    href_pattern = re.compile(r'<a\s+(?:[^>]*?\s+)?href=(["\'])(https?://[^"\'>]+)\1', re.IGNORECASE)
+    href_matches = href_pattern.findall(description)
+    
+    # If we found href links, return the first one (usually the main article link)
+    if href_matches and len(href_matches) > 0:
+        return href_matches[0][1]  # Return the URL part from the first match
+    
+    # Pattern for bare URLs
+    url_pattern = re.compile(r'https?://[^\s<>"\')]+', re.IGNORECASE)
+    url_matches = url_pattern.findall(description)
+    
+    # If we found bare URLs, return the first one
+    if url_matches and len(url_matches) > 0:
+        return url_matches[0]
+    
+    return None
+
+
 def extract_content(entry: Dict[str, Any]) -> str:
     """Extract the main content from a feed entry."""
     content = ""
@@ -555,6 +587,13 @@ def process_feed(
                 "read more".lower() in content.lower() or  # Content has "read more" prompt
                 "continue reading".lower() in content.lower()  # Content has "continue reading" prompt
             )
+            
+            # Check if this is an aggregator feed that needs to peer through to the origin article
+            if feed.peer_through and entry.get('description'):
+                origin_url = extract_origin_url(entry.get('description', ''))
+                if origin_url and origin_url != article_url:
+                    logger.info(f"Feed is marked for peer-through. Using origin URL: {origin_url} instead of {article_url}")
+                    article_url = origin_url
             
             if should_fetch_jina and article_url.startswith('http'):
                 logger.info(f"Content may be incomplete for {article_url}, attempting to fetch from Jina.ai")
