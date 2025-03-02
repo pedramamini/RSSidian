@@ -18,7 +18,7 @@ RSSidian is a powerful tool that bridges your RSS feed subscriptions with Obsidi
   - Vector embeddings for efficient content discovery
   - Feed statistics tracking (article count, quality ratings)
   - Configurable Obsidian markdown export
-- **AI-Powered Analysis**: 
+- **AI-Powered Analysis**:
   - Uses OpenRouter to generate customized summaries and insights
   - Smart content quality assessment (S/A/B/C/D tier system)
   - Value analysis with numerical scoring (1-100)
@@ -163,20 +163,18 @@ rssidian init
 # Show configuration and system status
 rssidian show-config    # Displays config, vector index status, and article stats
 
-# Import OPML file with subscriptions
-rssidian import path/to/subscriptions.opml
-
-# Export feeds to OPML file
-rssidian export-opml path/to/export.opml                # Export all feeds including muted ones
-rssidian export-opml path/to/export.opml --exclude-muted  # Export only active feeds (exclude muted)
+# Import and export feeds in OPML format
+rssidian opml import path/to/subscriptions.opml           # Import feeds from OPML file
+rssidian opml export path/to/export.opml                  # Export all feeds
+rssidian opml export path/to/export.opml --exclude-muted  # Export only active feeds (exclude muted)
 
 # Manage feed subscriptions
-rssidian subscriptions list              # List all subscriptions (sorted alphabetically)
+rssidian subscriptions list                  # List all subscriptions (sorted alphabetically)
 rssidian subscriptions list --sort=articles  # List all subscriptions (sorted by article count)
 rssidian subscriptions list --sort=rating    # List all subscriptions (sorted by quality rating)
 rssidian subscriptions list --sort=updated   # List all subscriptions (sorted by last update date)
-rssidian subscriptions mute "Feed Title"    # Mute a feed (skip during ingestion)
-rssidian subscriptions unmute "Feed Title"  # Unmute a feed
+rssidian subscriptions mute "Feed Title"     # Mute a feed (skip during ingestion)
+rssidian subscriptions unmute "Feed Title"   # Unmute a feed
 
 # Process new articles (last 7 days by default)
 rssidian ingest

@@ -93,11 +93,17 @@ def init():
     ))
 
 
-@cli.command()
+@cli.group()
+def opml():
+    """Import and export feeds in OPML format."""
+    pass
+
+
+@opml.command("import")
 @click.argument("opml_file", type=click.Path(exists=True))
 @click.option("--force", is_flag=True, help="Force import even if feeds already exist")
 @click.pass_context
-def import_opml(ctx, opml_file, force):
+def opml_import(ctx, opml_file, force):
     """Import feeds from OPML file."""
     config = ctx.obj["config"]
     db_session = ensure_db_exists(config)
@@ -143,12 +149,12 @@ def import_opml(ctx, opml_file, force):
         db_session.close()
 
 
-@cli.command("export-opml")
+@opml.command("export")
 @click.argument("output_file", type=click.Path())
-@click.option("--include-muted/--exclude-muted", default=True, 
-              help="Include or exclude muted feeds in the export")
+@click.option("--exclude-muted", is_flag=True, 
+              help="Exclude muted feeds from the export")
 @click.pass_context
-def export_opml(ctx, output_file, include_muted):
+def opml_export(ctx, output_file, exclude_muted):
     """Export feeds to OPML file."""
     config = ctx.obj["config"]
     db_session = ensure_db_exists(config, initialize=False)
@@ -160,7 +166,7 @@ def export_opml(ctx, output_file, include_muted):
         
         # Query feeds to get a count
         query = db_session.query(Feed)
-        if not include_muted:
+        if exclude_muted:
             query = query.filter_by(muted=False)
         
         feeds_count = query.count()
@@ -171,7 +177,7 @@ def export_opml(ctx, output_file, include_muted):
             return
         
         # Generate OPML content
-        opml_content = export_feeds_to_opml(db_session, include_muted)
+        opml_content = export_feeds_to_opml(db_session, not exclude_muted)
         
         # Write to file
         with open(output_file, "w", encoding="utf-8") as f:
@@ -184,7 +190,7 @@ def export_opml(ctx, output_file, include_muted):
         
         summary_table.add_row("Exported feeds", f"[green]{feeds_count}[/green]")
         summary_table.add_row("Output file", f"[bold]{output_file}[/bold]")
-        summary_table.add_row("Included muted feeds", f"[{'green' if include_muted else 'yellow'}]{include_muted}[/{'green' if include_muted else 'yellow'}]")
+        summary_table.add_row("Excluded muted feeds", f"[{'green' if exclude_muted else 'yellow'}]{exclude_muted}[/{'green' if exclude_muted else 'yellow'}]")
         
         console.print(Panel.fit(
             "[bold green]Export Successful[/bold green]", 

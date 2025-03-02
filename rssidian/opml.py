@@ -1,5 +1,6 @@
 import os
 import xml.etree.ElementTree as ET
+import xml.dom.minidom
 from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime
 from sqlalchemy.orm import Session
@@ -151,5 +152,7 @@ def export_feeds_to_opml(db_session: Session, include_muted: bool = True) -> str
         if feed.peer_through:
             outline.set("peerThrough", "true")
     
-    # Convert the XML to a string
-    return ET.tostring(root, encoding="unicode", method="xml")
+    # Format the XML with proper indentation
+    rough_string = ET.tostring(root, encoding="unicode", method="xml")
+    reparsed = xml.dom.minidom.parseString(rough_string)
+    return reparsed.toprettyxml(indent="  ")
