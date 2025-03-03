@@ -23,6 +23,7 @@ RSSidian is a powerful tool that bridges your RSS feed subscriptions with Obsidi
   - Smart content quality assessment (S/A/B/C/D tier system)
   - Value analysis with numerical scoring (1-100)
   - Configurable quality thresholds for content filtering
+  - Cost tracking for all AI API calls
 - **Digest Generation**:
   - Creates comprehensive digest notes in Obsidian
   - Collapses similar/overlapping stories for concise presentation

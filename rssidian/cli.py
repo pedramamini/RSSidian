@@ -469,6 +469,12 @@ def ingest(ctx, lookback, debug):
     # Import modules only when needed
     from .core import RSSProcessor
     from .markdown import write_digest_to_obsidian
+    from .cost_tracker import init_cost_tracker, format_cost_summary
+    
+    # Initialize cost tracker if enabled
+    cost_tracking_enabled = config.cost_tracking_enabled
+    if cost_tracking_enabled:
+        init_cost_tracker()
     
     # Suppress RSS module logs unless debug is enabled
     if not debug and not os.environ.get("DEBUG"):
@@ -506,6 +512,10 @@ def ingest(ctx, lookback, debug):
         else:
             click.echo("Failed to write digest to Obsidian.")
         
+        # Display cost summary if enabled
+        if cost_tracking_enabled:
+            click.echo("\n" + format_cost_summary())
+        
     except Exception as e:
         click.echo(f"Error during ingestion: {str(e)}", err=True)
         if debug:
@@ -527,7 +537,13 @@ def search(ctx, query, relevance, refresh):
     
     # Import processor only when needed
     from .core import RSSProcessor
+    from .cost_tracker import init_cost_tracker, format_cost_summary
     import os
+    
+    # Initialize cost tracker if enabled
+    cost_tracking_enabled = config.cost_tracking_enabled
+    if cost_tracking_enabled:
+        init_cost_tracker()
     
     # Set logging level based on DEBUG environment variable
     if not os.environ.get("DEBUG"):
@@ -630,6 +646,10 @@ def search(ctx, query, relevance, refresh):
                     ))
                 
                 console.print()
+        
+        # Display cost summary if enabled
+        if cost_tracking_enabled:
+            console.print("\n" + format_cost_summary())
     
     except Exception as e:
         console.print(f"[bold red]Error during search:[/bold red] {str(e)}")

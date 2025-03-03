@@ -36,6 +36,10 @@ def call_openrouter_api(prompt: str, api_key: str, model: str) -> Optional[str]:
         logger.error("OpenRouter API key not configured")
         return None
     
+    # Import modules here to avoid circular imports
+    from .cost_tracker import track_api_call
+    from .config import Config
+    
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json"
@@ -56,6 +60,11 @@ def call_openrouter_api(prompt: str, api_key: str, model: str) -> Optional[str]:
         )
         response.raise_for_status()
         response_data = response.json()
+        
+        # Track the cost of this API call if enabled
+        config = Config()
+        if config.cost_tracking_enabled:
+            track_api_call(response_data, model)
         
         if "choices" in response_data and len(response_data["choices"]) > 0:
             return response_data["choices"][0]["message"]["content"]

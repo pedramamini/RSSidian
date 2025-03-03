@@ -72,6 +72,11 @@ class Config:
         return self.get("openrouter", "api_key")
     
     @property
+    def cost_tracking_enabled(self) -> bool:
+        """Check if cost tracking is enabled."""
+        return self.get("openrouter", "cost_tracking_enabled", True)
+    
+    @property
     def openrouter_model(self) -> str:
         """Get OpenRouter model."""
         return self.get("openrouter", "model", "openai/gpt-4o")

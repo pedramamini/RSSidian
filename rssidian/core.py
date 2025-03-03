@@ -92,6 +92,9 @@ class RSSProcessor:
             logger.error("OpenRouter API key not configured")
             return None
         
+        # Import cost tracker here to avoid circular imports
+        from .cost_tracker import track_api_call
+        
         use_model = model or self.config.openrouter_model
         
         headers = {
@@ -114,6 +117,10 @@ class RSSProcessor:
             )
             response.raise_for_status()
             response_data = response.json()
+            
+            # Track the cost of this API call if enabled
+            if self.config.cost_tracking_enabled:
+                track_api_call(response_data, use_model)
             
             if "choices" in response_data and len(response_data["choices"]) > 0:
                 return response_data["choices"][0]["message"]["content"]

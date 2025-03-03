@@ -9,7 +9,7 @@ vault_path = "~/Documents/Obsidian"
 filename_template = "RSS Digest {from_date} to {to_date}"
 
 # Template for generated digest note
-# Available variables: {date_range}, {summary_items}, {value_analysis}, {feed_stats}, {aggregated_summary}
+# Available variables: {date_range}, {summary_items}, {value_analysis}, {feed_stats}, {aggregated_summary}, {cost_summary}
 template = """# Feed Digest
 
 ## Aggregated Overview by Subject
@@ -20,6 +20,9 @@ template = """# Feed Digest
 
 ## Feed Statistics
 {feed_stats}
+
+## Cost Summary
+{cost_summary}
 """
 
 [search]
@@ -32,6 +35,9 @@ excerpt_length = 300
 # OpenRouter API configuration
 # API key can also be set via RSSIDIAN_OPENROUTER_API_KEY environment variable
 api_key = ""
+
+# Enable or disable cost tracking for API calls
+cost_tracking_enabled = true
 
 # Model to use for topic detection and article processing
 processing_model = "openai/gpt-4o"
