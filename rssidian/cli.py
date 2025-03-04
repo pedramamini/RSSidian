@@ -274,6 +274,8 @@ def list_subscriptions(ctx, sort, width):
     table.add_column("Rating", justify="center", width=10)
     table.add_column("Last Updated", width=date_width)
     table.add_column("Domain", style="dim", width=domain_width, no_wrap=True)
+    table.add_column("Errors", justify="right", width=8)
+    table.add_column("Last Error", style="dim", width=30, no_wrap=True)
     
     for feed in feeds:
         # Use stored article count instead of querying each time
@@ -349,13 +351,22 @@ def list_subscriptions(ctx, sort, width):
         # Prepare feed title - no need to truncate as the Rich table will handle it with ellipsis
         feed_title = feed.title
         
+        # Format error count and last error
+        error_count = str(feed.error_count) if feed.error_count > 0 else ""
+        error_style = "[red]" if feed.error_count > 0 else ""
+        last_error = feed.last_error if feed.last_error else ""
+        if last_error and len(last_error) > 30:
+            last_error = last_error[:27] + "..."
+
         table.add_row(
             feed_title,
             status,
             str(article_count),
             rating_display,
             last_updated,
-            domain
+            domain,
+            f"{error_style}{error_count}[/red]" if error_count else "",
+            last_error
         )
     
     console.print(table)
