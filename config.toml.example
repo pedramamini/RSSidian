@@ -15,7 +15,7 @@ template = """# Feed Digest
 ## Aggregated Overview by Subject
 {aggregated_summary}
 
-## Top Stories
+## Article Summaries
 {summary_items}
 
 ## Feed Statistics

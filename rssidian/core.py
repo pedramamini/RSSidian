@@ -537,11 +537,12 @@ class RSSProcessor:
             feed = self.db_session.query(Feed).filter_by(id=article.feed_id).first()
             feed_name = feed.title if feed else "Unknown Feed"
             
-            # Format: Title (Feed) - Summary
-            summary_text = f"## {article.title} ({feed_name})\n"
+            # Format: Title (Feed) - Summary with internal link
+            anchor_id = f"article-{article.id}"
+            summary_text = f"## [{article.title}](#{anchor_id}) ({feed_name})\n"
             
             # Add URL
-            summary_text += f"URL: {article.url}\n"
+            summary_text += f"Source: {article.url}\n"
             
             # Add quality tier if available
             if article.quality_tier:
@@ -656,8 +657,13 @@ class RSSProcessor:
                 tier_display = f"{article.quality_tier}-Tier" if article.quality_tier else ""
                 date_display = article.published_at.strftime("%Y-%m-%d") if article.published_at else "Unknown date"
                 
-                summary_items.append(f"### [{article.title}]({article.url})")
+                # Create a unique anchor ID for this article
+                anchor_id = f"article-{article.id}"
+                
+                # Add the article with internal anchor
+                summary_items.append(f"### <a id=\"{anchor_id}\"></a>{article.title}")
                 summary_items.append(f"*{feed_name} | {date_display} | {tier_display}*")
+                summary_items.append(f"[Read Original]({article.url})")
                 
                 if article.summary:
                     summary_items.append(f"\n{article.summary}\n")
