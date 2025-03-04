@@ -80,11 +80,16 @@ def write_digest_to_obsidian(digest: Dict[str, Any], config: Config) -> Optional
     
     # Apply template
     template = config.obsidian_template
+    
+    # Import cost_tracker to get the cost summary
+    from .cost_tracker import format_cost_summary
+    
     content = template.format(
         date_range=digest["date_range"],
         summary_items=digest["summary_items"],
         feed_stats=digest["feed_stats"],
-        aggregated_summary=digest.get("aggregated_summary", "No aggregated summary available.")
+        aggregated_summary=digest.get("aggregated_summary", "No aggregated summary available."),
+        cost_summary=format_cost_summary() or "No cost information available."
     )
     
     # Write to file
