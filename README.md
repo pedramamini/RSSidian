@@ -35,8 +35,10 @@ RSSidian is a powerful tool that bridges your RSS feed subscriptions with Obsidi
   - Finds relevant content even when exact words don't match
   - Configurable relevance threshold for fine-tuning results
   - Results grouped by feed with relevant excerpts
-- **Obsidian Integration**: Generates markdown notes with customizable templates
-- **MCP Service API**: Exposes a Model Context Protocol service for AI agents
+- **Obsidian Integration**:
+  - Generates markdown notes with customizable templates
+- **MCP Service API**:
+  -Exposes a Model Context Protocol service for AI agents
 
 ## Installation
 

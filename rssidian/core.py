@@ -669,13 +669,15 @@ class RSSProcessor:
                     summary_items.append(f"\n{article.summary}\n")
         
         # Build feed stats
-        feed_counts = defaultdict(int)
+        feed_stats_dict = defaultdict(lambda: {"total": 0, "accepted": 0})
         for article in articles:
             feed = self.db_session.query(Feed).filter_by(id=article.feed_id).first()
             if feed:
-                feed_counts[feed.title] += 1
+                feed_stats_dict[feed.title]["total"] += 1
+                if article.quality_tier and QUALITY_TIERS.get(article.quality_tier, 0) >= min_tier_rank:
+                    feed_stats_dict[feed.title]["accepted"] += 1
         
-        sorted_feeds = sorted(feed_counts.items(), key=lambda x: x[1], reverse=True)
+        sorted_feeds = sorted(feed_stats_dict.items(), key=lambda x: x[1]["total"], reverse=True)
         
         feed_stats = [
             f"Total articles processed: {len(articles)}",
@@ -684,8 +686,9 @@ class RSSProcessor:
             "\nArticles per feed:"
         ]
         
-        for feed_name, count in sorted_feeds:
-            feed_stats.append(f"- {feed_name}: {count}")
+        for feed_name, stats in sorted_feeds:
+            acceptance_rate = (stats["accepted"] / stats["total"]) * 100 if stats["total"] > 0 else 0
+            feed_stats.append(f"- {feed_name}: {stats['total']}, {stats['accepted']} accepted, {acceptance_rate:.0f}%")
         
         # Format dates for the digest
         from_date_str = start_date.strftime('%Y-%m-%d')
