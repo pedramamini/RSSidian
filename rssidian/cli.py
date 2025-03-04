@@ -538,6 +538,11 @@ def search(ctx, query, relevance, refresh):
     # Import processor only when needed
     from .core import RSSProcessor
     from .cost_tracker import init_cost_tracker, format_cost_summary
+
+    # Initialize cost tracker if enabled
+    cost_tracking_enabled = config.cost_tracking_enabled
+    if cost_tracking_enabled:
+        init_cost_tracker()
     import os
     
     # Initialize cost tracker if enabled

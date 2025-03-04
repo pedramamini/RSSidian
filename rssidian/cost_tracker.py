@@ -143,14 +143,20 @@ def track_api_call(response_data: Dict[str, Any], model: str):
 def format_cost_summary() -> str:
     """
     Format the cost summary as a string.
+    Only returns a summary if there are non-zero costs.
     
     Returns:
-        A formatted string with the cost summary
+        A formatted string with the cost summary if costs exist, empty string otherwise
     """
     if not hasattr(_local, "costs"):
-        return "No API calls tracked"
+        return ""
     
     costs = _local.costs
+    
+    # Return empty string if no actual costs
+    if costs['total_cost'] == Decimal("0.0"):
+        return ""
+    
     summary = [
         "AI Cost Summary:",
         f"  API Calls: {costs['api_calls']}",
