@@ -521,6 +521,9 @@ def ingest(ctx, lookback, debug):
         if debug:
             import traceback
             click.echo(traceback.format_exc())
+        # Still show cost summary on error if enabled
+        if cost_tracking_enabled:
+            click.echo("\n" + format_cost_summary())
     finally:
         db_session.close()
 
