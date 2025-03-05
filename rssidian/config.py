@@ -180,8 +180,10 @@ Group the articles into clear categories such as Politics, Science, Technology, 
 
 For each category:
 1. Provide a brief overview of the key themes or trends
-2. List the most important articles with their titles (in markdown link format) and a 1-sentence description
+2. List the most important articles with their titles as internal links and a 1-sentence description
 3. Highlight any connections or contradictions between articles in the same category
+
+IMPORTANT: When creating links to articles, use Obsidian's internal linking format. The format should be [[{filename}#article-{{id}}|**Article Title**]] where {filename} is the name of the current digest file (without the .md extension) and {{id}} is the article ID from the anchor. DO NOT link directly to external URLs. This allows users to first jump to the article summary within the document before deciding to visit the external site.
 
 Finally, provide a brief "Big Picture" section that identifies any cross-category trends or important developments.
 

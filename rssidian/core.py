@@ -33,14 +33,14 @@ QUALITY_TIERS = {
 
 class RSSProcessor:
     """Main processor for RSS feeds and articles."""
-    
+
     def __init__(self, config: Config, db_session: Session):
         """Initialize the processor with configuration and database session."""
         self.config = config
         self.db_session = db_session
         self._embedding_model = None
         self._vector_index = None
-        
+
     @property
     def embedding_model(self):
         """Lazy load the embedding model."""
@@ -48,24 +48,24 @@ class RSSProcessor:
             logger.info("Loading embedding model...")
             self._embedding_model = SentenceTransformer('all-mpnet-base-v2')
         return self._embedding_model
-    
+
     def ingest_feeds(self, lookback_days: Optional[int] = None, debug: bool = False) -> Dict[str, int]:
         """
         Ingest articles from all active feeds.
-        
+
         Args:
             lookback_days: Number of days to look back for articles (default: config value)
             debug: Enable debug logging
-            
+
         Returns:
             Dictionary with ingestion statistics
         """
         if debug:
             logging.getLogger().setLevel(logging.DEBUG)
-            
+
         lookback = lookback_days or self.config.default_lookback
         logger.info(f"Ingesting feeds with {lookback} day lookback period")
-        
+
         return process_all_feeds(
             self.db_session,
             lookback_days=lookback,
@@ -75,15 +75,15 @@ class RSSProcessor:
             config=self.config,  # Pass the config for article analysis
             analyze_content=self.config.analyze_during_ingestion  # Whether to analyze during ingestion
         )
-    
+
     def _call_openrouter_api(self, prompt: str, model: Optional[str] = None) -> Optional[str]:
         """
         Call the OpenRouter API with a prompt.
-        
+
         Args:
             prompt: Prompt to send to the API
             model: Model to use (default: config value)
-            
+
         Returns:
             Response from the API or None if failed
         """
@@ -91,24 +91,24 @@ class RSSProcessor:
         if not api_key:
             logger.error("OpenRouter API key not configured")
             return None
-        
+
         # Import cost tracker here to avoid circular imports
         from .cost_tracker import track_api_call
-        
+
         use_model = model or self.config.openrouter_model
-        
+
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
         }
-        
+
         data = {
             "model": use_model,
             "messages": [
                 {"role": "user", "content": prompt}
             ]
         }
-        
+
         try:
             response = requests.post(
                 "https://openrouter.ai/api/v1/chat/completions",
@@ -117,61 +117,61 @@ class RSSProcessor:
             )
             response.raise_for_status()
             response_data = response.json()
-            
+
             # Track the cost of this API call if enabled
             if self.config.cost_tracking_enabled:
                 track_api_call(response_data, use_model)
-            
+
             if "choices" in response_data and len(response_data["choices"]) > 0:
                 return response_data["choices"][0]["message"]["content"]
             else:
                 logger.error(f"Invalid API response: {response_data}")
                 return None
-        
+
         except Exception as e:
             logger.error(f"API call failed: {str(e)}")
             return None
-    
+
     def _generate_summary(self, article: Article) -> Optional[str]:
         """
         Generate a summary for an article.
-        
+
         Args:
             article: Article to summarize
-            
+
         Returns:
             Summary text or None if summarization failed
         """
         if not article.content:
             logger.warning(f"Article {article.id} has no content to summarize")
             return None
-        
+
         prompt = self.config.openrouter_prompt.format(content=article.content)
         return self._call_openrouter_api(prompt)
-    
+
     def _analyze_value(self, article: Article) -> Tuple[Optional[str], Optional[int], Optional[str]]:
         """
         Analyze the value of an article.
-        
+
         Args:
             article: Article to analyze
-            
+
         Returns:
             Tuple of (quality_tier, quality_score, labels)
         """
         if not self.config.value_prompt_enabled or not article.content:
             return None, None, None
-        
+
         prompt = self.config.value_prompt.format(content=article.content)
         response = self._call_openrouter_api(prompt, self.config.openrouter_processing_model)
-        
+
         if not response:
             return None, None, None
-        
+
         try:
             # Try to parse as JSON
             data = json.loads(response)
-            
+
             # Extract quality tier from the rating field
             quality_tier = None
             rating = data.get("rating:")
@@ -179,7 +179,7 @@ class RSSProcessor:
                 match = re.search(r"([SABCD]) Tier", rating)
                 if match:
                     quality_tier = match.group(1)
-            
+
             # Extract quality score
             quality_score = data.get("quality-score")
             if isinstance(quality_score, str):
@@ -187,54 +187,54 @@ class RSSProcessor:
                     quality_score = int(quality_score)
                 except ValueError:
                     quality_score = None
-            
+
             # Extract labels
             labels = data.get("labels")
-            
+
             return quality_tier, quality_score, labels
-        
+
         except (json.JSONDecodeError, KeyError) as e:
             logger.error(f"Failed to parse value analysis: {str(e)}")
             return None, None, None
-    
+
     def _generate_embedding(self, text: str) -> List[float]:
         """
         Generate an embedding vector for text.
-        
+
         Args:
             text: Text to embed
-            
+
         Returns:
             Embedding vector
         """
         # Truncate text if too long (most models have a max token limit)
         max_chars = 5000
         truncated_text = text[:max_chars] if len(text) > max_chars else text
-        
+
         return self.embedding_model.encode(truncated_text).tolist()
-    
+
     def _store_embedding(self, article_id: int, embedding: List[float]) -> None:
         """
         Store an embedding vector in the Annoy index.
-        
+
         Args:
             article_id: ID of the article
             embedding: Embedding vector
         """
         if self._vector_index is None:
             self._load_or_create_index()
-        
+
         if self._vector_index:
             self._vector_index.add_item(article_id, embedding)
             self._vector_index.build(self.config.annoy_n_trees)
             self._vector_index.save(self.config.annoy_index_path)
-    
+
     def _load_or_create_index(self) -> None:
         """Load the existing Annoy index or create a new one."""
         embedding_dim = 768  # all-mpnet-base-v2 dimension
-        
+
         self._vector_index = AnnoyIndex(embedding_dim, self.config.annoy_metric)
-        
+
         # Try to load existing index
         if os.path.exists(self.config.annoy_index_path):
             try:
@@ -244,24 +244,24 @@ class RSSProcessor:
                 logger.error(f"Failed to load vector index: {str(e)}")
                 # Create a new index
                 self._vector_index = AnnoyIndex(embedding_dim, self.config.annoy_metric)
-    
+
     def process_articles(self, batch_size: int = 10) -> Dict[str, int]:
         """
         Process unprocessed articles (summarize, analyze value, generate embeddings).
-        
+
         Args:
             batch_size: Number of articles to process at once
-            
+
         Returns:
             Dictionary with processing statistics
         """
         # Get unprocessed articles
         unprocessed = self.db_session.query(Article).filter_by(processed=False).all()
-        
+
         if not unprocessed:
             logger.info("No unprocessed articles found")
             return {"articles_processed": 0, "with_summary": 0, "with_value": 0, "with_embedding": 0}
-        
+
         # Initialize counters
         stats = {
             "articles_processed": 0,
@@ -269,14 +269,14 @@ class RSSProcessor:
             "with_value": 0,
             "with_embedding": 0
         }
-        
+
         # Track feed statistics updates
         feed_stats = defaultdict(lambda: {
             "new_articles": 0,
             "quality_tiers": defaultdict(int),
             "quality_scores": []
         })
-        
+
         # Process articles in batches using Rich progress bar
         with Progress(
             SpinnerColumn(),
@@ -288,20 +288,20 @@ class RSSProcessor:
             expand=True
         ) as progress:
             overall_task = progress.add_task(f"[bold]Processing {len(unprocessed)} articles", total=len(unprocessed))
-            
+
             for i in range(0, len(unprocessed), batch_size):
                 batch = unprocessed[i:i+batch_size]
-                
+
                 for article in batch:
                     # Update the progress description with current article
                     progress.update(overall_task, description=f"[bold blue]Processing: [cyan]{article.title[:40]}")
-                    
+
                     # Generate summary
                     summary = self._generate_summary(article)
                     if summary:
                         article.summary = summary
                         stats["with_summary"] += 1
-                    
+
                     # Analyze value
                     if self.config.value_prompt_enabled:
                         quality_tier, quality_score, labels = self._analyze_value(article)
@@ -310,23 +310,23 @@ class RSSProcessor:
                         article.labels = labels
                         if quality_tier:
                             stats["with_value"] += 1
-                    
+
                     # Generate embedding from content and summary
                     if article.content:
                         text_to_embed = article.content
                         if article.summary:
                             text_to_embed = article.summary + "\n\n" + text_to_embed
-                        
+
                         embedding = self._generate_embedding(text_to_embed)
                         self._store_embedding(article.id, embedding)
                         article.embedding_generated = True
                         stats["with_embedding"] += 1
-                    
+
                     # Mark as processed
                     article.processed = True
                     article.processed_at = datetime.utcnow()
                     stats["articles_processed"] += 1
-                    
+
                     # Track statistics for this feed
                     feed_id = article.feed_id
                     feed_stats[feed_id]["new_articles"] += 1
@@ -334,22 +334,22 @@ class RSSProcessor:
                         feed_stats[feed_id]["quality_tiers"][article.quality_tier] += 1
                     if article.quality_score:
                         feed_stats[feed_id]["quality_scores"].append(article.quality_score)
-                    
+
                     # Save after each article in case of errors
                     self.db_session.commit()
-                    
+
                     # Update progress
                     progress.update(overall_task, advance=1)
-        
+
         # Update feed statistics
         self._update_feed_statistics(feed_stats)
-        
+
         return stats
-    
+
     def _update_feed_statistics(self, feed_stats: Dict[int, Dict[str, Any]]):
         """
         Update feed statistics with processed article data.
-        
+
         Args:
             feed_stats: Dictionary of feed statistics keyed by feed_id
         """
@@ -357,10 +357,10 @@ class RSSProcessor:
             feed = self.db_session.query(Feed).filter_by(id=feed_id).first()
             if not feed:
                 continue
-            
+
             # Update article count
             feed.article_count = (feed.article_count or 0) + stats["new_articles"]
-            
+
             # Update quality tier counts
             current_tier_counts = {}
             if feed.quality_tier_counts:
@@ -368,57 +368,57 @@ class RSSProcessor:
                     current_tier_counts = json.loads(feed.quality_tier_counts)
                 except json.JSONDecodeError:
                     current_tier_counts = {}
-            
+
             # Merge current and new tier counts
             for tier, count in stats["quality_tiers"].items():
                 current_tier_counts[tier] = current_tier_counts.get(tier, 0) + count
             feed.quality_tier_counts = json.dumps(current_tier_counts)
-            
+
             # Update average quality score
             if stats["quality_scores"]:
                 current_total = (feed.avg_quality_score or 0) * (feed.article_count - stats["new_articles"] or 0)
                 new_total = current_total + sum(stats["quality_scores"])
                 feed.avg_quality_score = new_total / feed.article_count if feed.article_count > 0 else None
-        
+
         # Commit changes
         self.db_session.commit()
-    
+
     def search(self, query: str, relevance_threshold: float = 0.3, max_results: int = 20, refresh: bool = False) -> List[Dict[str, Any]]:
         """
         Search for articles using semantic search.
-        
+
         Args:
             query: Search query
             relevance_threshold: Minimum relevance score (0-1)
             max_results: Maximum number of results to return
             refresh: Whether to refresh the index before searching
-            
+
         Returns:
             List of search results
         """
         # Refresh the index if requested
         if refresh or self._vector_index is None:
             self._load_or_create_index()
-            
+
             # If still none, there are no embeddings yet
             if self._vector_index is None:
                 logger.warning("No vector index available")
                 return []
-        
+
         # Generate query embedding
         query_embedding = self._generate_embedding(query)
-        
+
         # Search for similar articles
         similar_ids, distances = self._vector_index.get_nns_by_vector(
-            query_embedding, 
+            query_embedding,
             max_results * 2,  # Get more than we need to filter by relevance
             include_distances=True
         )
-        
+
         # Convert distances to similarity scores (Annoy uses distance, we want similarity)
         # For angular distance, similarity = 1 - (distance^2 / 2)
         similarities = [1 - (dist**2 / 2) for dist in distances]
-        
+
         # Filter by relevance threshold
         results = []
         for article_id, similarity in zip(similar_ids, similarities):
@@ -426,10 +426,10 @@ class RSSProcessor:
                 article = self.db_session.query(Article).filter_by(id=article_id).first()
                 if article:
                     feed = self.db_session.query(Feed).filter_by(id=article.feed_id).first()
-                    
+
                     # Generate excerpt around the most relevant part
                     excerpt = self._generate_excerpt(article.content, query, self.config.excerpt_length)
-                    
+
                     results.append({
                         "id": article.id,
                         "title": article.title,
@@ -442,53 +442,53 @@ class RSSProcessor:
                         "quality_score": article.quality_score,
                         "relevance": similarity
                     })
-        
+
         # Sort by relevance
         results.sort(key=lambda x: x["relevance"], reverse=True)
-        
+
         # Limit to max_results
         return results[:max_results]
-    
+
     def _generate_excerpt(self, text: str, query: str, max_length: int = 300) -> str:
         """
         Generate an excerpt of text around the most relevant part to the query.
-        
+
         Args:
             text: Text to excerpt
             query: Search query
             max_length: Maximum length of excerpt
-            
+
         Returns:
             Excerpt of text
         """
         if not text:
             return ""
-        
+
         # Simple approach: split text into sentences and find the one with the most query terms
         sentences = re.split(r'(?<=[.!?])\s+', text)
-        
+
         # Count query terms in each sentence
         query_terms = re.findall(r'\w+', query.lower())
         scores = []
-        
+
         for sentence in sentences:
             sentence_lower = sentence.lower()
             score = sum(1 for term in query_terms if term in sentence_lower)
             scores.append(score)
-        
+
         # Find the sentence with the highest score
         if not scores:
             return text[:max_length] + "..." if len(text) > max_length else text
-        
+
         best_idx = scores.index(max(scores))
-        
+
         # Build excerpt around the best sentence
         excerpt = sentences[best_idx]
-        
+
         # Add context before and after
         left_idx, right_idx = best_idx - 1, best_idx + 1
         remaining_length = max_length - len(excerpt)
-        
+
         while remaining_length > 0 and (left_idx >= 0 or right_idx < len(sentences)):
             # Alternate adding sentences from before and after
             if left_idx >= 0:
@@ -499,7 +499,7 @@ class RSSProcessor:
                     left_idx -= 1
                 else:
                     break
-            
+
             if right_idx < len(sentences) and remaining_length > 0:
                 right_sentence = sentences[right_idx]
                 if len(right_sentence) <= remaining_length:
@@ -508,86 +508,140 @@ class RSSProcessor:
                     right_idx += 1
                 else:
                     break
-        
+
         # Add ellipsis if we didn't include all context
         if left_idx >= 0:
             excerpt = "..." + excerpt
         if right_idx < len(sentences):
             excerpt = excerpt + "..."
-        
+
         return excerpt
-    
-    def _generate_aggregated_summary(self, articles: List[Article]) -> Optional[str]:
+
+    def _generate_aggregated_summary(self, articles: List[Article], filename: str = None) -> Optional[str]:
         """
         Generate an aggregated summary of articles categorized by subject matter.
-        
+
         Args:
             articles: List of articles to summarize
-            
+            filename: Name of the digest file (without extension)
+
         Returns:
             Aggregated summary text or None if generation failed
         """
         if not articles:
             logger.warning("No articles to generate aggregated summary")
             return None
-        
+
         # Prepare article summaries for the prompt
         article_summaries = []
         for article in articles:
             feed = self.db_session.query(Feed).filter_by(id=article.feed_id).first()
             feed_name = feed.title if feed else "Unknown Feed"
-            
+
             # Format: Title (Feed) - Summary with internal link
-            anchor_id = f"article-{article.id}"
-            summary_text = f"## [{article.title}](#{anchor_id}) ({feed_name})\n"
-            
-            # Add URL
+            # Store the article title for later reference in Obsidian internal link format
+            article_title = article.title
+
+            # Use Obsidian internal link format for the LLM to reference
+            summary_text = f"## **{article.title}** ({feed_name})\n"
+
+            # Add URL as plain text
             summary_text += f"Source: {article.url}\n"
-            
+
             # Add quality tier if available
             if article.quality_tier:
                 summary_text += f"Quality: {article.quality_tier}-Tier\n"
-            
+
             # Add labels if available
             if article.labels:
                 summary_text += f"Labels: {article.labels}\n"
-            
+
             # Add the article summary
             if article.summary:
                 summary_text += f"\n{article.summary}\n"
-            
+
             article_summaries.append(summary_text)
-        
+
         # Join all summaries with separators
         all_summaries = "\n---\n".join(article_summaries)
-        
-        # Create the prompt with the summaries
-        prompt = self.config.aggregator_prompt.format(summaries=all_summaries)
-        
+
+        # Create the prompt with the summaries and filename
+        prompt = self.config.aggregator_prompt.format(
+            summaries=all_summaries,
+            filename=filename or "RSS Digest"
+        )
+
         # Call the API to generate the aggregated summary
-        return self._call_openrouter_api(prompt, self.config.openrouter_processing_model)
-    
+        llm_output = self._call_openrouter_api(prompt, self.config.openrouter_processing_model)
+
+        if llm_output and filename:
+            # Process the output to replace external links with Obsidian internal links
+            return self._process_aggregated_summary(llm_output, filename, articles)
+
+        return llm_output
+
+    def _process_aggregated_summary(self, summary: str, filename: str, articles: List[Article]) -> str:
+        """
+        Process the aggregated summary to replace external links with Obsidian internal links.
+
+        Args:
+            summary: The aggregated summary text
+            filename: The filename of the digest
+            articles: List of articles
+
+        Returns:
+            Processed summary text
+        """
+        # Create a mapping of article titles to use for replacements
+        article_titles = {article.title: article for article in articles}
+
+        # Regular expression to find markdown links: [Title](URL)
+        link_pattern = r'\[([^\]]+)\]\(([^\)]+)\)'
+
+        def replace_link(match):
+            title = match.group(1)
+            url = match.group(2)
+
+            # Clean up the title (remove ** or other markdown formatting)
+            clean_title = re.sub(r'[\*_`]', '', title)
+
+            # Check if this title exists in our articles
+            for article_title, article in article_titles.items():
+                # Check if the clean title is similar to an article title
+                if clean_title in article_title or article_title in clean_title:
+                    # If the URL is an external link, replace with Obsidian internal link
+                    if url.startswith('http'):
+                        return f'[[{filename}#{article_title}|{title}]]'
+
+            # If no match or not an external link, return the original
+            return match.group(0)
+
+        # Replace links in the summary
+        processed_summary = re.sub(link_pattern, replace_link, summary)
+
+        return processed_summary
+
     def generate_digest(self, lookback_days: int = 7) -> Dict[str, Any]:
         """
         Generate a digest of high-value articles from the lookback period.
-        
+
         Args:
             lookback_days: Number of days to look back
-            
+
         Returns:
             Dictionary with digest content
         """
         # Calculate date range
         end_date = datetime.utcnow()
         start_date = end_date - timedelta(days=lookback_days)
-        
+
         # Get processed articles in date range
         articles = self.db_session.query(Article).filter(
             Article.processed == True,
             Article.published_at >= start_date,
             Article.published_at <= end_date
         ).all()
-        
+
         if not articles:
             logger.warning(f"No processed articles found in date range")
             from_date_str = start_date.strftime('%Y-%m-%d')
@@ -600,27 +654,27 @@ class RSSProcessor:
                 "feed_stats": "No data available.",
                 "articles": []
             }
-        
+
         # Filter by quality tier
         min_tier = self.config.minimum_quality_tier
         min_tier_rank = QUALITY_TIERS.get(min_tier, 0)
-        
+
         high_value_articles = []
         for article in articles:
             if not article.quality_tier:
                 continue
-            
+
             tier_rank = QUALITY_TIERS.get(article.quality_tier, 0)
             if tier_rank >= min_tier_rank:
                 high_value_articles.append(article)
-        
+
         # Group by topic using labels
         topics = defaultdict(list)
         for article in high_value_articles:
             if not article.labels:
                 topics["Uncategorized"].append(article)
                 continue
-            
+
             # Split labels and use the first one as primary topic
             labels = [label.strip() for label in article.labels.split(",")]
             if labels:
@@ -628,46 +682,60 @@ class RSSProcessor:
                 topics[primary_label].append(article)
             else:
                 topics["Uncategorized"].append(article)
-        
+
         # Sort topics by quality
         def get_topic_quality(topic_articles):
             return sum(QUALITY_TIERS.get(a.quality_tier, 0) for a in topic_articles)
-        
+
         sorted_topics = sorted(topics.items(), key=lambda x: get_topic_quality(x[1]), reverse=True)
-        
-        # Generate aggregated summary
-        aggregated_summary = self._generate_aggregated_summary(high_value_articles)
-        
+
+        # Format dates for the digest
+        from_date_str = start_date.strftime('%Y-%m-%d')
+        to_date_str = end_date.strftime('%Y-%m-%d')
+
+        # Create filename for the digest
+        filename_template = self.config.obsidian_filename_template
+        formatted_filename = filename_template.format(
+            date_range=f"Feed Overview from {from_date_str} through {to_date_str}",
+            from_date=from_date_str,
+            to_date=to_date_str,
+            date=datetime.now().strftime("%Y-%m-%d"),
+            datetime=datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        )
+
+        # Remove .md extension if present
+        if formatted_filename.endswith(".md"):
+            formatted_filename = formatted_filename[:-3]
+
+        # Generate aggregated summary with filename
+        aggregated_summary = self._generate_aggregated_summary(high_value_articles, formatted_filename)
+
         # Build summary items
         summary_items = []
         for topic, topic_articles in sorted_topics:
             summary_items.append(f"## {topic}")
-            
+
             # Sort articles by quality tier and then by date
             sorted_articles = sorted(
                 topic_articles,
                 key=lambda a: (QUALITY_TIERS.get(a.quality_tier, 0), a.published_at or datetime.min),
                 reverse=True
             )
-            
+
             for article in sorted_articles:
                 feed = self.db_session.query(Feed).filter_by(id=article.feed_id).first()
                 feed_name = feed.title if feed else "Unknown Feed"
-                
+
                 tier_display = f"{article.quality_tier}-Tier" if article.quality_tier else ""
                 date_display = article.published_at.strftime("%Y-%m-%d") if article.published_at else "Unknown date"
-                
-                # Create a unique anchor ID for this article
-                anchor_id = f"article-{article.id}"
-                
-                # Add the article with internal anchor
-                summary_items.append(f"### <a id=\"{anchor_id}\"></a>{article.title}")
+
+                # Add the article with a clean heading (no anchor)
+                summary_items.append(f"### {article.title}")
                 summary_items.append(f"*{feed_name} | {date_display} | {tier_display}*")
-                summary_items.append(f"[Read Original]({article.url})")
-                
+
                 if article.summary:
                     summary_items.append(f"\n{article.summary}\n")
-        
+
         # Build feed stats
         feed_stats_dict = defaultdict(lambda: {"total": 0, "accepted": 0})
         for article in articles:
@@ -676,24 +744,20 @@ class RSSProcessor:
                 feed_stats_dict[feed.title]["total"] += 1
                 if article.quality_tier and QUALITY_TIERS.get(article.quality_tier, 0) >= min_tier_rank:
                     feed_stats_dict[feed.title]["accepted"] += 1
-        
+
         sorted_feeds = sorted(feed_stats_dict.items(), key=lambda x: x[1]["total"], reverse=True)
-        
+
         feed_stats = [
             f"Total articles processed: {len(articles)}",
             f"High-value articles (>= {min_tier}-Tier): {len(high_value_articles)}",
             f"Number of topics: {len(topics)}",
             "\nArticles per feed:"
         ]
-        
+
         for feed_name, stats in sorted_feeds:
             acceptance_rate = (stats["accepted"] / stats["total"]) * 100 if stats["total"] > 0 else 0
             feed_stats.append(f"- {feed_name}: {stats['total']}, {stats['accepted']} accepted, {acceptance_rate:.0f}%")
-        
-        # Format dates for the digest
-        from_date_str = start_date.strftime('%Y-%m-%d')
-        to_date_str = end_date.strftime('%Y-%m-%d')
-        
+
         digest = {
             "date_range": f"Feed Overview from {from_date_str} through {to_date_str}",
             "from_date": from_date_str,
@@ -701,7 +765,8 @@ class RSSProcessor:
             "summary_items": "\n\n".join(summary_items),
             "feed_stats": "\n".join(feed_stats),
             "articles": high_value_articles,
-            "aggregated_summary": aggregated_summary
+            "aggregated_summary": aggregated_summary,
+            "filename": formatted_filename
         }
-        
+
         return digest

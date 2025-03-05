@@ -84,12 +84,16 @@ def write_digest_to_obsidian(digest: Dict[str, Any], config: Config) -> Optional
     # Import cost_tracker to get the cost summary
     from .cost_tracker import format_cost_summary
     
+    # Get the filename without extension for internal linking
+    filename_without_extension = os.path.splitext(filename)[0]
+    
     content = template.format(
         date_range=digest["date_range"],
         summary_items=digest["summary_items"],
         feed_stats=digest["feed_stats"],
         aggregated_summary=digest.get("aggregated_summary", "No aggregated summary available."),
-        cost_summary=format_cost_summary() or "No cost information available."
+        cost_summary=format_cost_summary() or "No cost information available.",
+        filename=digest.get("filename", filename_without_extension)
     )
     
     # Write to file
