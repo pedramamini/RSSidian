@@ -57,14 +57,17 @@ def ensure_mcp_connection(config: Config) -> ModelContextProtocol:
     return mcp
 
 
-def format_articles_response(articles: List[Dict]) -> str:
+def format_articles_response(articles: List[Dict], limit: int = 50, offset: int = 0) -> str:
     """Format articles data for MCP response."""
     if not articles:
         return "No articles found."
 
-    result = f"Found {len(articles)} articles:\n\n"
-    for i, article in enumerate(articles[:10]):  # Show first 10
-        result += f"{i+1}. {article['title']}\n"
+    result = f"Showing {len(articles)} articles (offset: {offset}, limit: {limit}):\n\n"
+
+    for i, article in enumerate(articles):
+        article_num = offset + i + 1
+        result += f"{article_num}. {article['title']}\n"
+        result += f"   ID: {article['id']}\n"
         result += f"   Feed: {article['feed_title']}\n"
         result += f"   Published: {article['published_at']}\n"
         result += f"   Quality: {article['quality_tier']} (score: {article['quality_score']})\n"
@@ -72,8 +75,15 @@ def format_articles_response(articles: List[Dict]) -> str:
             result += f"   Summary: {article['summary'][:200]}{'...' if len(article['summary']) > 200 else ''}\n"
         result += f"   URL: {article['url']}\n\n"
 
-    if len(articles) > 10:
-        result += f"... and {len(articles) - 10} more articles\n"
+    # Add pagination guidance
+    if len(articles) == limit:
+        next_offset = offset + limit
+        result += f"📄 Pagination: To get more articles, use offset={next_offset} with limit={limit}\n"
+        result += f"   Example: {{\"limit\": {limit}, \"offset\": {next_offset}}}\n"
+
+    if offset > 0:
+        prev_offset = max(0, offset - limit)
+        result += f"📄 Previous page: Use offset={prev_offset} with limit={limit}\n"
 
     return result
 
@@ -132,7 +142,7 @@ class MCPServer:
                 }
             },
             "list_articles": {
-                "description": "Get a list of articles from RSS feeds with optional filtering by feed, date range, and quality tier. Returns article summaries with metadata.",
+                "description": "Get a list of articles from RSS feeds with optional filtering by feed, date range, and quality tier. Supports pagination via limit/offset parameters. Returns article summaries with metadata and pagination guidance.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -404,7 +414,7 @@ class MCPServer:
                 days_back=days_back,
                 min_quality_tier=min_quality_tier
             )
-            return format_articles_response(articles)
+            return format_articles_response(articles, limit, offset)
 
         elif name == "get_article_content":
             article_id = arguments["article_id"]
