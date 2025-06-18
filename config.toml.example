@@ -205,7 +205,7 @@ OUTPUT FORMAT:
 
 Your output is ONLY in JSON. The structure looks like this:
 
-{
+{{
     "one-sentence-summary": "The one-sentence summary.",
     "labels": "The labels that apply from the set of options above.",
     "rating:": "S Tier: (Must Consume Original Content This Week) (or whatever the
@@ -213,7 +213,7 @@ Your output is ONLY in JSON. The structure looks like this:
     "rating-explanation:": "The explanation given for the rating.",
     "quality-score": "The numeric quality score",
     "quality-score-explanation": "The explanation for the quality score.",
-}
+}}
 
 OUTPUT INSTRUCTIONS
 
