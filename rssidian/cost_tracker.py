@@ -159,11 +159,11 @@ def format_cost_summary() -> str:
     
     summary = [
         "AI Cost Summary:",
-        f"  API Calls:: {costs['api_calls']}",
-        f"  Prompt Tokens:: {costs['prompt_tokens']}",
-        f"  Completion Tokens:: {costs['completion_tokens']}",
-        f"  Total Tokens:: {costs['total_tokens']}",
-        f"  Total Cost:: {costs['total_cost']:.6f}"
+        f"  API_Calls:: {costs['api_calls']}",
+        f"  Prompt_Tokens:: {costs['prompt_tokens']}",
+        f"  Completion_Tokens:: {costs['completion_tokens']}",
+        f"  Total_Tokens:: {costs['total_tokens']}",
+        f"  Total_Cost:: {costs['total_cost']:.6f}"
     ]
     
     # Add model-specific information if available
