@@ -245,9 +245,168 @@ class RSSProcessor:
                 # Create a new index
                 self._vector_index = AnnoyIndex(embedding_dim, self.config.annoy_metric)
 
+    def find_similar_articles(self, article: Article, similarity_threshold: float = None) -> List[Article]:
+        """
+        Find similar articles to the given article using embeddings.
+
+        Args:
+            article: Article to find similar articles for
+            similarity_threshold: Minimum similarity score (default: config value)
+
+        Returns:
+            List of similar articles
+        """
+        if not article.content:
+            return []
+
+        threshold = similarity_threshold or self.config.similarity_threshold
+
+        # Generate embedding for the article
+        text_to_embed = article.content
+        if article.summary:
+            text_to_embed = article.summary + "\n\n" + text_to_embed
+
+        query_embedding = self._generate_embedding(text_to_embed)
+
+        # Load index if needed
+        if self._vector_index is None:
+            self._load_or_create_index()
+
+        if self._vector_index is None:
+            return []
+
+        try:
+            # Search for similar articles
+            similar_ids, distances = self._vector_index.get_nns_by_vector(
+                query_embedding,
+                20,  # Get up to 20 candidates
+                include_distances=True
+            )
+
+            # Convert distances to similarity scores
+            similarities = [1 - (dist**2 / 2) for dist in distances]
+
+            # Find articles that meet the similarity threshold
+            similar_articles = []
+            for article_id, similarity in zip(similar_ids, similarities):
+                if similarity >= threshold and article_id != article.id:
+                    similar_article = self.db_session.query(Article).filter_by(id=article_id).first()
+                    if similar_article and not similar_article.processed:
+                        similar_articles.append(similar_article)
+
+            return similar_articles
+
+        except Exception as e:
+            logger.warning(f"Error finding similar articles for {article.title}: {str(e)}")
+            return []
+
+    def _group_similar_articles(self, articles: List[Article]) -> List[List[Article]]:
+        """
+        Group articles by similarity.
+
+        Args:
+            articles: List of articles to group
+
+        Returns:
+            List of article groups (each group is a list of similar articles)
+        """
+        if not articles:
+            return []
+
+        groups = []
+        processed_ids = set()
+
+        for article in articles:
+            if article.id in processed_ids:
+                continue
+
+            # Start a new group with this article
+            group = [article]
+            processed_ids.add(article.id)
+
+            # Find similar articles
+            similar_articles = self.find_similar_articles(article)
+            for similar_article in similar_articles:
+                if similar_article.id not in processed_ids:
+                    group.append(similar_article)
+                    processed_ids.add(similar_article.id)
+
+            groups.append(group)
+
+        logger.info(f"Grouped {len(articles)} articles into {len(groups)} groups")
+        for i, group in enumerate(groups):
+            if len(group) > 1:
+                logger.info(f"Group {i+1}: {len(group)} similar articles")
+                for article in group:
+                    logger.info(f"  - {article.title[:60]}")
+
+        return groups
+
+    def _generate_grouped_summary(self, articles: List[Article]) -> Optional[str]:
+        """
+        Generate a summary for a group of similar articles.
+
+        Args:
+            articles: List of similar articles to summarize together
+
+        Returns:
+            Combined summary text or None if generation failed
+        """
+        if not articles:
+            return None
+
+        if len(articles) == 1:
+            # Single article, use regular summary
+            return self._generate_summary(articles[0])
+
+        # Multiple similar articles - create combined summary
+        logger.info(f"Generating grouped summary for {len(articles)} similar articles")
+
+        # Prepare content from all articles
+        combined_content = []
+        sources = []
+        
+        for i, article in enumerate(articles, 1):
+            feed = self.db_session.query(Feed).filter_by(id=article.feed_id).first()
+            feed_name = feed.title if feed else "Unknown Feed"
+            
+            # Add source information
+            sources.append(f"Source {i}: {article.title} ({feed_name}) - {article.url}")
+            
+            # Add content with source label
+            if article.content:
+                combined_content.append(f"--- Source {i} Content ---\n{article.content}")
+
+        if not combined_content:
+            logger.warning("No content found in article group")
+            return None
+
+        # Create prompt for grouped summarization
+        all_content = "\n\n".join(combined_content)
+        all_sources = "\n".join(sources)
+
+        grouped_prompt = f"""You are summarizing multiple articles about the same topic or event. 
+
+Create a comprehensive summary that:
+1. Identifies the main topic/event being covered
+2. Combines information from all sources into a coherent narrative
+3. Notes any different perspectives or additional details from different sources
+4. Provides key insights and takeaways
+
+Sources:
+{all_sources}
+
+Combined Content:
+{all_content}
+
+Provide a comprehensive summary that synthesizes information from all sources."""
+
+        return self._call_openrouter_api(grouped_prompt)
+
     def process_articles(self, batch_size: int = 10) -> Dict[str, int]:
         """
         Process unprocessed articles (summarize, analyze value, generate embeddings).
+        Groups similar articles and creates combined summaries.
 
         Args:
             batch_size: Number of articles to process at once
@@ -260,14 +419,15 @@ class RSSProcessor:
 
         if not unprocessed:
             logger.info("No unprocessed articles found")
-            return {"articles_processed": 0, "with_summary": 0, "with_value": 0, "with_embedding": 0}
+            return {"articles_processed": 0, "with_summary": 0, "with_value": 0, "with_embedding": 0, "groups_processed": 0}
 
         # Initialize counters
         stats = {
             "articles_processed": 0,
             "with_summary": 0,
             "with_value": 0,
-            "with_embedding": 0
+            "with_embedding": 0,
+            "groups_processed": 0
         }
 
         # Track feed statistics updates
@@ -277,7 +437,7 @@ class RSSProcessor:
             "quality_scores": []
         })
 
-        # Process articles in batches using Rich progress bar
+        # Process article groups using Rich progress bar
         with Progress(
             SpinnerColumn(),
             TextColumn("[bold blue]{task.description}"),
@@ -287,22 +447,44 @@ class RSSProcessor:
             TimeRemainingColumn(),
             expand=True
         ) as progress:
-            overall_task = progress.add_task(f"[bold]Processing {len(unprocessed)} articles", total=len(unprocessed))
+            # Step 1: Generate embeddings for all articles first (needed for similarity detection)
+            logger.info(f"Generating embeddings for {len(unprocessed)} articles...")
+            embedding_task = progress.add_task(f"[bold]Generating embeddings", total=len(unprocessed))
+            
+            for article in unprocessed:
+                if article.content:
+                    embedding = self._generate_embedding(article.content)
+                    self._store_embedding(article.id, embedding)
+                    article.embedding_generated = True
+                    stats["with_embedding"] += 1
+                progress.update(embedding_task, advance=1)
+            
+            # Step 2: Group similar articles after embeddings are generated
+            logger.info(f"Grouping {len(unprocessed)} articles by similarity...")
+            article_groups = self._group_similar_articles(unprocessed)
+            stats["groups_processed"] = len(article_groups)
 
-            for i in range(0, len(unprocessed), batch_size):
-                batch = unprocessed[i:i+batch_size]
+            # Step 3: Process article groups for summaries and value analysis
+            summary_task = progress.add_task(f"[bold]Processing {len(article_groups)} groups", total=len(unprocessed))
 
-                for article in batch:
-                    # Update the progress description with current article
-                    progress.update(overall_task, description=f"[bold blue]Processing: [cyan]{article.title[:40]}")
+            for group_idx, group in enumerate(article_groups):
+                # Update progress description
+                if len(group) == 1:
+                    progress.update(summary_task, description=f"[bold blue]Processing: [cyan]{group[0].title[:40]}")
+                else:
+                    progress.update(summary_task, description=f"[bold blue]Processing group of {len(group)} similar articles")
 
-                    # Generate summary
-                    summary = self._generate_summary(article)
-                    if summary:
-                        article.summary = summary
+                # Generate grouped summary
+                grouped_summary = self._generate_grouped_summary(group)
+                
+                # Process each article in the group
+                for article in group:
+                    # Set the grouped summary for all articles in the group
+                    if grouped_summary:
+                        article.summary = grouped_summary
                         stats["with_summary"] += 1
 
-                    # Analyze value
+                    # Analyze value (done individually for each article)
                     if self.config.value_prompt_enabled:
                         quality_tier, quality_score, labels = self._analyze_value(article)
                         article.quality_tier = quality_tier
@@ -310,17 +492,6 @@ class RSSProcessor:
                         article.labels = labels
                         if quality_tier:
                             stats["with_value"] += 1
-
-                    # Generate embedding from content and summary
-                    if article.content:
-                        text_to_embed = article.content
-                        if article.summary:
-                            text_to_embed = article.summary + "\n\n" + text_to_embed
-
-                        embedding = self._generate_embedding(text_to_embed)
-                        self._store_embedding(article.id, embedding)
-                        article.embedding_generated = True
-                        stats["with_embedding"] += 1
 
                     # Mark as processed
                     article.processed = True
@@ -335,11 +506,11 @@ class RSSProcessor:
                     if article.quality_score:
                         feed_stats[feed_id]["quality_scores"].append(article.quality_score)
 
-                    # Save after each article in case of errors
-                    self.db_session.commit()
-
                     # Update progress
-                    progress.update(overall_task, advance=1)
+                    progress.update(summary_task, advance=1)
+
+                # Save after each group in case of errors
+                self.db_session.commit()
 
         # Update feed statistics
         self._update_feed_statistics(feed_stats)
@@ -722,19 +893,51 @@ class RSSProcessor:
                 reverse=True
             )
 
+            # Group articles by summary to detect and display similar articles together
+            summary_groups = defaultdict(list)
             for article in sorted_articles:
-                feed = self.db_session.query(Feed).filter_by(id=article.feed_id).first()
-                feed_name = feed.title if feed else "Unknown Feed"
+                summary_key = article.summary if article.summary else f"no_summary_{article.id}"
+                summary_groups[summary_key].append(article)
 
-                tier_display = f"{article.quality_tier}-Tier" if article.quality_tier else ""
-                date_display = article.published_at.strftime("%Y-%m-%d") if article.published_at else "Unknown date"
+            for summary_key, articles_in_group in summary_groups.items():
+                if len(articles_in_group) == 1:
+                    # Single article - display normally
+                    article = articles_in_group[0]
+                    feed = self.db_session.query(Feed).filter_by(id=article.feed_id).first()
+                    feed_name = feed.title if feed else "Unknown Feed"
 
-                # Add the article with a clean heading (no anchor)
-                summary_items.append(f"### {article.title}")
-                summary_items.append(f"*{feed_name} | {date_display} | {tier_display}*")
+                    tier_display = f"{article.quality_tier}-Tier" if article.quality_tier else ""
+                    date_display = article.published_at.strftime("%Y-%m-%d") if article.published_at else "Unknown date"
 
-                if article.summary:
-                    summary_items.append(f"\n{article.summary}\n")
+                    summary_items.append(f"### {article.title}")
+                    summary_items.append(f"*{feed_name} | {date_display} | {tier_display}*")
+                    summary_items.append(f"\n{article.url}\n")
+
+                    if article.summary:
+                        summary_items.append(f"{article.summary}\n")
+                else:
+                    # Multiple articles with same summary - display as grouped
+                    logger.info(f"Displaying {len(articles_in_group)} similar articles as a group")
+                    
+                    # Create a title that represents the group
+                    first_article = articles_in_group[0]
+                    summary_items.append(f"### {first_article.title}")
+                    
+                    # Show all sources
+                    source_lines = []
+                    for article in articles_in_group:
+                        feed = self.db_session.query(Feed).filter_by(id=article.feed_id).first()
+                        feed_name = feed.title if feed else "Unknown Feed"
+                        tier_display = f"{article.quality_tier}-Tier" if article.quality_tier else ""
+                        date_display = article.published_at.strftime("%Y-%m-%d") if article.published_at else "Unknown date"
+                        source_lines.append(f"{feed_name} | {date_display} | {tier_display}")
+                        source_lines.append(article.url)
+                    
+                    summary_items.append("*" + "\n".join(source_lines) + "*")
+                    summary_items.append("")
+
+                    if first_article.summary:
+                        summary_items.append(f"{first_article.summary}\n")
 
         # Build feed stats
         feed_stats_dict = defaultdict(lambda: {"total": 0, "accepted": 0})
