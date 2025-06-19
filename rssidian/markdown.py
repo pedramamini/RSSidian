@@ -93,7 +93,8 @@ def write_digest_to_obsidian(digest: Dict[str, Any], config: Config) -> Optional
         feed_stats=digest["feed_stats"],
         aggregated_summary=digest.get("aggregated_summary", "No aggregated summary available."),
         cost_summary=format_cost_summary() or "No cost information available.",
-        filename=digest.get("filename", filename_without_extension)
+        filename=digest.get("filename", filename_without_extension),
+        ingestion_date=current_date
     )
     
     # Write to file

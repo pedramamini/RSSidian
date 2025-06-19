@@ -9,7 +9,7 @@ vault_path = "~/Documents/Obsidian"
 filename_template = "RSS Digest {from_date} to {to_date}"
 
 # Template for generated digest note
-# Available variables: {date_range}, {summary_items}, {value_analysis}, {feed_stats}, {aggregated_summary}, {cost_summary}
+# Available variables: {date_range}, {summary_items}, {value_analysis}, {feed_stats}, {aggregated_summary}, {cost_summary}, {ingestion_date}
 template = """# Feed Digest
 
 ## Aggregated Overview by Subject
@@ -23,6 +23,8 @@ template = """# Feed Digest
 
 ## Cost Summary
 {cost_summary}
+
+Ingestion_Date:: {ingestion_date}
 """
 
 [search]
