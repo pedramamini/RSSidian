@@ -732,10 +732,6 @@ class RSSProcessor:
                 # Add the article with a clean heading (no anchor)
                 summary_items.append(f"### {article.title}")
                 summary_items.append(f"*{feed_name} | {date_display} | {tier_display}*")
-                
-                # Add the URL to the original content
-                if article.url:
-                    summary_items.append(f"\n{article.url}\n")
 
                 if article.summary:
                     summary_items.append(f"\n{article.summary}\n")
