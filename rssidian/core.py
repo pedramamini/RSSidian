@@ -66,15 +66,27 @@ class RSSProcessor:
         lookback = lookback_days or self.config.default_lookback
         logger.info(f"Ingesting feeds with {lookback} day lookback period")
 
-        return process_all_feeds(
-            self.db_session,
-            lookback_days=lookback,
-            max_articles_per_feed=self.config.max_articles_per_feed,
-            max_errors=5,  # Maximum number of consecutive errors before marking feed as inactive
-            retry_attempts=3,  # Number of retry attempts for transient errors
-            config=self.config,  # Pass the config for article analysis
-            analyze_content=self.config.analyze_during_ingestion  # Whether to analyze during ingestion
-        )
+        try:
+            return process_all_feeds(
+                self.db_session,
+                lookback_days=lookback,
+                max_articles_per_feed=self.config.max_articles_per_feed,
+                max_errors=5,  # Maximum number of consecutive errors before marking feed as inactive
+                retry_attempts=3,  # Number of retry attempts for transient errors
+                config=self.config,  # Pass the config for article analysis
+                analyze_content=self.config.analyze_during_ingestion  # Whether to analyze during ingestion
+            )
+        except Exception as e:
+            logger.error(f"Error during ingestion: {str(e)}", exc_info=True)
+            # Return empty stats in case of complete failure
+            return {
+                "feeds_processed": 0,
+                "new_articles": 0,
+                "auto_muted": 0,
+                "jina_enhanced": 0,
+                "with_summary": 0,
+                "with_value_analysis": 0
+            }
 
     def _call_openrouter_api(self, prompt: str, model: Optional[str] = None) -> Optional[str]:
         """
@@ -452,11 +464,14 @@ Provide a comprehensive summary that synthesizes information from all sources.""
             embedding_task = progress.add_task(f"[bold]Generating embeddings", total=len(unprocessed))
             
             for article in unprocessed:
-                if article.content:
-                    embedding = self._generate_embedding(article.content)
-                    self._store_embedding(article.id, embedding)
-                    article.embedding_generated = True
-                    stats["with_embedding"] += 1
+                try:
+                    if article.content:
+                        embedding = self._generate_embedding(article.content)
+                        self._store_embedding(article.id, embedding)
+                        article.embedding_generated = True
+                        stats["with_embedding"] += 1
+                except Exception as e:
+                    logger.error(f"Error generating embedding for article {article.id}: {str(e)}")
                 progress.update(embedding_task, advance=1)
             
             # Step 2: Group similar articles after embeddings are generated
@@ -468,53 +483,77 @@ Provide a comprehensive summary that synthesizes information from all sources.""
             summary_task = progress.add_task(f"[bold]Processing {len(article_groups)} groups", total=len(unprocessed))
 
             for group_idx, group in enumerate(article_groups):
-                # Update progress description
-                if len(group) == 1:
-                    progress.update(summary_task, description=f"[bold blue]Processing: [cyan]{group[0].title[:40]}")
-                else:
-                    progress.update(summary_task, description=f"[bold blue]Processing group of {len(group)} similar articles")
+                try:
+                    # Update progress description
+                    if len(group) == 1:
+                        progress.update(summary_task, description=f"[bold blue]Processing: [cyan]{group[0].title[:40]}")
+                    else:
+                        progress.update(summary_task, description=f"[bold blue]Processing group of {len(group)} similar articles")
 
-                # Generate grouped summary
-                grouped_summary = self._generate_grouped_summary(group)
-                
-                # Process each article in the group
-                for article in group:
-                    # Set the grouped summary for all articles in the group
-                    if grouped_summary:
-                        article.summary = grouped_summary
-                        stats["with_summary"] += 1
+                    # Generate grouped summary
+                    grouped_summary = self._generate_grouped_summary(group)
+                    
+                    # Process each article in the group
+                    for article in group:
+                        try:
+                            # Set the grouped summary for all articles in the group
+                            if grouped_summary:
+                                article.summary = grouped_summary
+                                stats["with_summary"] += 1
 
-                    # Analyze value (done individually for each article)
-                    if self.config.value_prompt_enabled:
-                        quality_tier, quality_score, labels = self._analyze_value(article)
-                        article.quality_tier = quality_tier
-                        article.quality_score = quality_score
-                        article.labels = labels
-                        if quality_tier:
-                            stats["with_value"] += 1
+                            # Analyze value (done individually for each article)
+                            if self.config.value_prompt_enabled:
+                                quality_tier, quality_score, labels = self._analyze_value(article)
+                                article.quality_tier = quality_tier
+                                article.quality_score = quality_score
+                                article.labels = labels
+                                if quality_tier:
+                                    stats["with_value"] += 1
 
-                    # Mark as processed
-                    article.processed = True
-                    article.processed_at = datetime.utcnow()
-                    stats["articles_processed"] += 1
+                            # Mark as processed
+                            article.processed = True
+                            article.processed_at = datetime.utcnow()
+                            stats["articles_processed"] += 1
 
-                    # Track statistics for this feed
-                    feed_id = article.feed_id
-                    feed_stats[feed_id]["new_articles"] += 1
-                    if article.quality_tier:
-                        feed_stats[feed_id]["quality_tiers"][article.quality_tier] += 1
-                    if article.quality_score:
-                        feed_stats[feed_id]["quality_scores"].append(article.quality_score)
+                            # Track statistics for this feed
+                            feed_id = article.feed_id
+                            feed_stats[feed_id]["new_articles"] += 1
+                            if article.quality_tier:
+                                feed_stats[feed_id]["quality_tiers"][article.quality_tier] += 1
+                            if article.quality_score:
+                                feed_stats[feed_id]["quality_scores"].append(article.quality_score)
 
-                    # Update progress
-                    progress.update(summary_task, advance=1)
+                            # Update progress
+                            progress.update(summary_task, advance=1)
+                        except Exception as e:
+                            logger.error(f"Error processing article {article.id} in group {group_idx}: {str(e)}")
+                            # Still mark as processed to avoid reprocessing
+                            article.processed = True
+                            article.processed_at = datetime.utcnow()
+                            stats["articles_processed"] += 1
+                            progress.update(summary_task, advance=1)
 
-                # Save after each group in case of errors
-                self.db_session.commit()
+                    # Save after each group in case of errors
+                    self.db_session.commit()
+                except Exception as e:
+                    logger.error(f"Error processing group {group_idx}: {str(e)}")
+                    # Mark all articles in the group as processed to avoid reprocessing
+                    for article in group:
+                        if not article.processed:
+                            article.processed = True
+                            article.processed_at = datetime.utcnow()
+                            stats["articles_processed"] += 1
+                            progress.update(summary_task, advance=1)
+                    self.db_session.commit()
 
         # Update feed statistics
         self._update_feed_statistics(feed_stats)
 
+        return stats
+    
+    except Exception as e:
+        logger.error(f"Error during article processing: {str(e)}", exc_info=True)
+        # Return partial stats if any processing was done
         return stats
 
     def _update_feed_statistics(self, feed_stats: Dict[int, Dict[str, Any]]):
