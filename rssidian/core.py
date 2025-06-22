@@ -550,11 +550,6 @@ Provide a comprehensive summary that synthesizes information from all sources.""
         self._update_feed_statistics(feed_stats)
 
         return stats
-    
-    except Exception as e:
-        logger.error(f"Error during article processing: {str(e)}", exc_info=True)
-        # Return partial stats if any processing was done
-        return stats
 
     def _update_feed_statistics(self, feed_stats: Dict[int, Dict[str, Any]]):
         """
