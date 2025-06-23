@@ -573,16 +573,18 @@ def process_feed(
             if not guid:
                 continue
             
-            # Check if article already exists
-            existing_article = db_session.query(Article).filter_by(guid=guid).first()
+            # Get the article URL first to check for URL-based duplicates
+            article_url = entry.get('link', guid)
+            
+            # Check if article already exists by GUID or URL
+            existing_article = db_session.query(Article).filter(
+                (Article.guid == guid) | (Article.url == article_url)
+            ).first()
             if existing_article:
                 continue
             
             # Extract content from feed entry
             content = extract_content(entry)
-            
-            # Get the article URL - prefer the link field over the guid
-            article_url = entry.get('link', guid) if entry.get('link') else guid
             
             # Try to fetch content from Jina.ai in these cases:
             # 1. No content was found in the feed

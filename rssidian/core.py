@@ -927,9 +927,21 @@ Provide a comprehensive summary that synthesizes information from all sources.""
                 reverse=True
             )
 
+            # First, deduplicate by URL - keep the highest quality version of each URL
+            url_to_best_article = {}
+            for article in sorted_articles:
+                if article.url not in url_to_best_article:
+                    url_to_best_article[article.url] = article
+                else:
+                    # Keep the article with higher quality tier (already sorted by quality)
+                    # Since articles are sorted by quality, the first one is already the best
+                    continue
+            
+            deduplicated_articles = list(url_to_best_article.values())
+            
             # Group articles by summary to detect and display similar articles together
             summary_groups = defaultdict(list)
-            for article in sorted_articles:
+            for article in deduplicated_articles:
                 summary_key = article.summary if article.summary else f"no_summary_{article.id}"
                 summary_groups[summary_key].append(article)
 
