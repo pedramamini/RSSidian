@@ -151,7 +151,7 @@ Content:
     @property
     def similarity_threshold(self) -> float:
         """Get similarity threshold for duplicate detection."""
-        return self.get("feeds", "similarity_threshold", 0.85)
+        return self.get("feeds", "similarity_threshold", 0.70)
     
     @property
     def excerpt_length(self) -> int:

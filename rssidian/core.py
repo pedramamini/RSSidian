@@ -225,6 +225,60 @@ class RSSProcessor:
 
         return self.embedding_model.encode(truncated_text).tolist()
 
+    def _calculate_title_similarity(self, title1: str, title2: str) -> float:
+        """
+        Calculate similarity between two article titles using string similarity.
+        
+        Args:
+            title1: First article title
+            title2: Second article title
+            
+        Returns:
+            Similarity score between 0 and 1
+        """
+        if not title1 or not title2:
+            return 0.0
+            
+        # Normalize titles for comparison
+        def normalize_title(title):
+            # Convert to lowercase and remove common words/punctuation
+            title = title.lower()
+            # Remove common prefixes and suffixes
+            title = re.sub(r'^(breaking|exclusive|update|news|report):\s*', '', title)
+            title = re.sub(r'\s*\(.*?\)\s*', '', title)  # Remove parenthetical content
+            title = re.sub(r'[^\w\s]', ' ', title)  # Remove punctuation
+            title = re.sub(r'\s+', ' ', title).strip()  # Normalize whitespace
+            return title
+            
+        norm_title1 = normalize_title(title1)
+        norm_title2 = normalize_title(title2)
+        
+        # Calculate word overlap
+        words1 = set(norm_title1.split())
+        words2 = set(norm_title2.split())
+        
+        if not words1 or not words2:
+            return 0.0
+            
+        # Jaccard similarity (intersection over union)
+        intersection = len(words1 & words2)
+        union = len(words1 | words2)
+        jaccard = intersection / union if union > 0 else 0.0
+        
+        # Also check for key entity overlaps (company names, dollar amounts, etc.)
+        # Look for uppercase words, dollar amounts, percentages, etc.
+        entities1 = set(re.findall(r'\b[A-Z][a-z]+\b|\$[\d,]+[BMK]?|\d+%', title1))
+        entities2 = set(re.findall(r'\b[A-Z][a-z]+\b|\$[\d,]+[BMK]?|\d+%', title2))
+        
+        entity_overlap = 0.0
+        if entities1 and entities2:
+            entity_intersection = len(entities1 & entities2)
+            entity_union = len(entities1 | entities2)
+            entity_overlap = entity_intersection / entity_union if entity_union > 0 else 0.0
+        
+        # Weighted combination of jaccard and entity overlap
+        return 0.7 * jaccard + 0.3 * entity_overlap
+
     def _store_embedding(self, article_id: int, embedding: List[float]) -> None:
         """
         Store an embedding vector in the Annoy index.
@@ -259,7 +313,7 @@ class RSSProcessor:
 
     def find_similar_articles(self, article: Article, similarity_threshold: float = None) -> List[Article]:
         """
-        Find similar articles to the given article using embeddings.
+        Find similar articles to the given article using both content embeddings and title similarity.
 
         Args:
             article: Article to find similar articles for
@@ -272,7 +326,25 @@ class RSSProcessor:
             return []
 
         threshold = similarity_threshold or self.config.similarity_threshold
+        similar_articles = []
 
+        # Method 1: Content-based similarity using embeddings
+        content_similar = self._find_content_similar_articles(article, threshold)
+        similar_articles.extend(content_similar)
+
+        # Method 2: Title-based similarity (catches articles with similar titles but different content)
+        title_similar = self._find_title_similar_articles(article, threshold)
+        
+        # Combine and deduplicate results
+        all_similar = {}
+        for similar_article in similar_articles + title_similar:
+            if similar_article.id != article.id and not similar_article.processed:
+                all_similar[similar_article.id] = similar_article
+
+        return list(all_similar.values())
+
+    def _find_content_similar_articles(self, article: Article, threshold: float) -> List[Article]:
+        """Find articles similar by content using embeddings."""
         # Generate embedding for the article
         text_to_embed = article.content
         if article.summary:
@@ -309,7 +381,35 @@ class RSSProcessor:
             return similar_articles
 
         except Exception as e:
-            logger.warning(f"Error finding similar articles for {article.title}: {str(e)}")
+            logger.warning(f"Error finding content-similar articles for {article.title}: {str(e)}")
+            return []
+
+    def _find_title_similar_articles(self, article: Article, threshold: float) -> List[Article]:
+        """Find articles similar by title using string similarity."""
+        if not article.title:
+            return []
+
+        try:
+            # Get recent unprocessed articles to compare against
+            recent_articles = self.db_session.query(Article).filter(
+                Article.processed == False,
+                Article.id != article.id
+            ).limit(100).all()  # Limit to avoid performance issues
+
+            similar_articles = []
+            for other_article in recent_articles:
+                if other_article.title:
+                    title_similarity = self._calculate_title_similarity(article.title, other_article.title)
+                    # Use a slightly lower threshold for title similarity since it's less precise
+                    title_threshold = max(0.6, threshold - 0.1)
+                    if title_similarity >= title_threshold:
+                        logger.info(f"Title similarity {title_similarity:.2f} between '{article.title}' and '{other_article.title}'")
+                        similar_articles.append(other_article)
+
+            return similar_articles
+
+        except Exception as e:
+            logger.warning(f"Error finding title-similar articles for {article.title}: {str(e)}")
             return []
 
     def _group_similar_articles(self, articles: List[Article]) -> List[List[Article]]:
@@ -826,6 +926,59 @@ Provide a comprehensive summary that synthesizes information from all sources.""
 
         return processed_summary
 
+    def _group_articles_for_digest(self, articles: List[Article]) -> List[List[Article]]:
+        """
+        Group articles by similarity for digest display.
+        This is a post-processing step that catches articles missed during initial grouping.
+        
+        Args:
+            articles: List of articles to group
+            
+        Returns:
+            List of article groups
+        """
+        if not articles:
+            return []
+            
+        groups = []
+        processed_ids = set()
+        
+        for article in articles:
+            if article.id in processed_ids:
+                continue
+                
+            # Start a new group with this article
+            group = [article]
+            processed_ids.add(article.id)
+            
+            # Find similar articles based on title similarity
+            for other_article in articles:
+                if (other_article.id != article.id and 
+                    other_article.id not in processed_ids and
+                    other_article.title and article.title):
+                    
+                    title_similarity = self._calculate_title_similarity(article.title, other_article.title)
+                    
+                    # Use a lower threshold for digest grouping to catch more similar articles
+                    if title_similarity >= 0.6:  # 60% title similarity
+                        logger.info(f"Grouping for digest: {title_similarity:.2f} similarity between '{article.title}' and '{other_article.title}'")
+                        group.append(other_article)
+                        processed_ids.add(other_article.id)
+            
+            groups.append(group)
+        
+        # Log grouping results
+        grouped_count = sum(1 for group in groups if len(group) > 1)
+        if grouped_count > 0:
+            logger.info(f"Digest grouping: Created {grouped_count} groups from {len(articles)} articles")
+            for i, group in enumerate(groups):
+                if len(group) > 1:
+                    logger.info(f"  Group {i+1}: {len(group)} articles")
+                    for article in group:
+                        logger.info(f"    - {article.title[:60]}...")
+        
+        return groups
+
     def generate_digest(self, lookback_days: int = 7) -> Dict[str, Any]:
         """
         Generate a digest of high-value articles from the lookback period.
@@ -939,11 +1092,21 @@ Provide a comprehensive summary that synthesizes information from all sources.""
             
             deduplicated_articles = list(url_to_best_article.values())
             
-            # Group articles by summary to detect and display similar articles together
-            summary_groups = defaultdict(list)
-            for article in deduplicated_articles:
-                summary_key = article.summary if article.summary else f"no_summary_{article.id}"
-                summary_groups[summary_key].append(article)
+            # Group similar articles for display - use improved similarity detection
+            article_groups = self._group_articles_for_digest(deduplicated_articles)
+            
+            # Convert groups to summary groups format for compatibility
+            summary_groups = {}
+            for i, group in enumerate(article_groups):
+                if len(group) == 1:
+                    # Single article
+                    article = group[0]
+                    summary_key = article.summary if article.summary else f"no_summary_{article.id}"
+                    summary_groups[summary_key] = group
+                else:
+                    # Multiple similar articles
+                    summary_key = f"grouped_{i}"
+                    summary_groups[summary_key] = group
 
             for summary_key, articles_in_group in summary_groups.items():
                 if len(articles_in_group) == 1:
@@ -965,25 +1128,33 @@ Provide a comprehensive summary that synthesizes information from all sources.""
                     # Multiple articles with same summary - display as grouped
                     logger.info(f"Displaying {len(articles_in_group)} similar articles as a group")
                     
-                    # Create a title that represents the group
-                    first_article = articles_in_group[0]
-                    summary_items.append(f"### {first_article.title}")
+                    # Create a title that represents the group - use the shortest/clearest title
+                    titles = [a.title for a in articles_in_group if a.title]
+                    if titles:
+                        # Sort by length and pick the shortest (usually clearer)
+                        best_title = min(titles, key=len)
+                        summary_items.append(f"### {best_title}")
+                    else:
+                        summary_items.append(f"### Similar Articles ({len(articles_in_group)} sources)")
                     
-                    # Show all sources
+                    # Show all sources in a cleaner format
                     source_lines = []
                     for article in articles_in_group:
                         feed = self.db_session.query(Feed).filter_by(id=article.feed_id).first()
                         feed_name = feed.title if feed else "Unknown Feed"
                         tier_display = f"{article.quality_tier}-Tier" if article.quality_tier else ""
                         date_display = article.published_at.strftime("%Y-%m-%d") if article.published_at else "Unknown date"
-                        source_lines.append(f"{feed_name} | {date_display} | {tier_display}")
+                        source_lines.append(f"*{feed_name} | {date_display} | {tier_display}*")
+                        source_lines.append("")
                         source_lines.append(article.url)
+                        source_lines.append("")
                     
-                    summary_items.append("*" + "\n".join(source_lines) + "*")
-                    summary_items.append("")
+                    summary_items.append("\n".join(source_lines))
 
-                    if first_article.summary:
-                        summary_items.append(f"{first_article.summary}\n")
+                    # Use the summary from the best/first article
+                    best_article = articles_in_group[0]  # Already sorted by quality
+                    if best_article.summary:
+                        summary_items.append(f"{best_article.summary}\n")
 
         # Build feed stats
         feed_stats_dict = defaultdict(lambda: {"total": 0, "accepted": 0})
