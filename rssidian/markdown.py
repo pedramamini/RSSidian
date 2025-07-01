@@ -98,7 +98,7 @@ def write_digest_to_obsidian(digest: Dict[str, Any], config: Config) -> Optional
         from_date=from_date,
         to_date=to_date,
         date=current_date,
-        datetime=current_datetime
+        ingestion_date=current_date
     )
     
     # Write to file
