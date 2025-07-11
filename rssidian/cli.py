@@ -13,6 +13,7 @@ from rich import box
 
 # Only import the lightweight config module at startup
 from .config import Config, init_config
+from . import __version__
 
 # Import backup functions at the top level since they're lightweight
 from .backup import create_backup, get_backup_list, restore_backup
@@ -68,6 +69,7 @@ def ensure_db_exists(config, initialize=True):
 
 
 @click.group()
+@click.version_option(version=__version__, prog_name="rssidian")
 @click.pass_context
 def cli(ctx):
     """RSSidian - Bridge between RSS feeds and Obsidian with AI-powered features."""
