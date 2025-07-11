@@ -246,4 +246,4 @@ default_lookback = 7
 max_articles_per_feed = 25
 
 # Settings for duplicate/similar article detection
-similarity_threshold = 0.85  # Higher values mean stricter matching
+similarity_threshold = 0.70  # Higher values mean stricter matching (0.70 = 70% similarity)
