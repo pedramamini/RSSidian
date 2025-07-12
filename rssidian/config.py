@@ -191,6 +191,40 @@ Article Summaries:
 {summaries}
 """
         return self.get("openrouter", "aggregator_prompt", default_prompt)
+    
+    @property
+    def ai_provider(self) -> str:
+        """Get AI provider (openrouter or anthropic)."""
+        return self.get("ai", "provider", "openrouter")
+    
+    @property
+    def anthropic_api_key(self) -> Optional[str]:
+        """Get Anthropic API key."""
+        env_key = os.environ.get("ANTHROPIC_API_KEY")
+        if env_key:
+            return env_key
+        return self.get("anthropic", "api_key")
+    
+    @property
+    def anthropic_model(self) -> str:
+        """Get Anthropic model."""
+        return self.get("anthropic", "model", "claude-3-5-sonnet-20241022")
+    
+    @property
+    def anthropic_processing_model(self) -> str:
+        """Get Anthropic processing model."""
+        return self.get("anthropic", "processing_model", "claude-3-5-sonnet-20241022")
+    
+    @property
+    def anthropic_system_prompt(self) -> str:
+        """Get Anthropic system prompt."""
+        default_system_prompt = "You are Claude Code, Anthropic's official CLI for Claude."
+        return self.get("anthropic", "system_prompt", default_system_prompt)
+    
+    @property
+    def anthropic_cost_tracking_enabled(self) -> bool:
+        """Check if cost tracking is enabled for Anthropic."""
+        return self.get("anthropic", "cost_tracking_enabled", True)
 
 
 def init_config() -> None:
@@ -213,10 +247,17 @@ def init_config() -> None:
             # If example config not found, create a minimal one
             with open(DEFAULT_CONFIG_PATH, "w") as f:
                 f.write("# RSSidian Configuration\n\n")
+                f.write("[ai]\n")
+                f.write("# AI provider: \"openrouter\" or \"anthropic\"\n")
+                f.write("provider = \"openrouter\"\n\n")
                 f.write("[obsidian]\n")
                 f.write("vault_path = \"~/Documents/Obsidian\"\n\n")
                 f.write("[openrouter]\n")
+                f.write("api_key = \"\"\n\n")
+                f.write("[anthropic]\n")
                 f.write("api_key = \"\"\n")
+                f.write("model = \"claude-3-5-sonnet-20241022\"\n")
+                f.write("system_prompt = \"You are Claude Code, Anthropic's official CLI for Claude.\"\n")
             print(f"Created minimal configuration file at {DEFAULT_CONFIG_PATH}")
     else:
         print(f"Configuration file already exists at {DEFAULT_CONFIG_PATH}")

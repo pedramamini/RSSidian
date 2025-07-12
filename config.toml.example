@@ -1,5 +1,10 @@
 # RSSidian Configuration
 
+[ai]
+# AI provider configuration
+# Available providers: "openrouter", "anthropic"
+provider = "openrouter"
+
 [obsidian]
 # Path to your Obsidian vault
 vault_path = "~/Documents/Obsidian"
@@ -247,3 +252,21 @@ max_articles_per_feed = 25
 
 # Settings for duplicate/similar article detection
 similarity_threshold = 0.70  # Higher values mean stricter matching (0.70 = 70% similarity)
+
+[anthropic]
+# Anthropic API configuration
+# API key can also be set via ANTHROPIC_API_KEY environment variable
+api_key = ""
+
+# Model to use for summarization and analysis
+# Available models: claude-3-5-sonnet-20241022, claude-3-5-haiku-20241022, claude-3-opus-20240229
+model = "claude-3-5-sonnet-20241022"
+
+# Model for processing tasks (can be different from main model)
+processing_model = "claude-3-5-sonnet-20241022"
+
+# Enable or disable cost tracking for Anthropic API calls
+cost_tracking_enabled = true
+
+# System prompt for Anthropic API calls
+system_prompt = "You are Claude Code, Anthropic's official CLI for Claude."

@@ -62,6 +62,53 @@ def get_model_pricing(model_id: str) -> Dict[str, Decimal]:
     _model_pricing[model_id] = default_pricing
     return default_pricing
 
+@lru_cache(maxsize=32)
+def get_anthropic_model_pricing(model_id: str) -> Dict[str, Decimal]:
+    """
+    Get the pricing information for an Anthropic model.
+    
+    Args:
+        model_id: The Anthropic model ID to get pricing for
+        
+    Returns:
+        A dictionary with 'input' and 'output' pricing per million tokens
+    """
+    # Anthropic pricing per million tokens (as of late 2024)
+    anthropic_pricing = {
+        "claude-3-5-sonnet-20241022": {
+            'input': Decimal('3.00'),   # $3.00 per 1M input tokens
+            'output': Decimal('15.00')  # $15.00 per 1M output tokens
+        },
+        "claude-3-5-sonnet-20240620": {
+            'input': Decimal('3.00'),
+            'output': Decimal('15.00')
+        },
+        "claude-3-5-haiku-20241022": {
+            'input': Decimal('1.00'),   # $1.00 per 1M input tokens
+            'output': Decimal('5.00')   # $5.00 per 1M output tokens
+        },
+        "claude-3-opus-20240229": {
+            'input': Decimal('15.00'),  # $15.00 per 1M input tokens
+            'output': Decimal('75.00')  # $75.00 per 1M output tokens
+        },
+        "claude-3-sonnet-20240229": {
+            'input': Decimal('3.00'),
+            'output': Decimal('15.00')
+        },
+        "claude-3-haiku-20240307": {
+            'input': Decimal('0.25'),   # $0.25 per 1M input tokens
+            'output': Decimal('1.25')   # $1.25 per 1M output tokens
+        }
+    }
+    
+    # Default pricing for unknown models
+    default_pricing = {
+        'input': Decimal('3.00'),
+        'output': Decimal('15.00')
+    }
+    
+    return anthropic_pricing.get(model_id, default_pricing)
+
 def init_cost_tracker():
     """Initialize the cost tracker for the current thread."""
     _local.costs = {
@@ -139,6 +186,53 @@ def track_api_call(response_data: Dict[str, Any], model: str):
     _local.costs["models_used"][model]["cost"] += total_cost
     
     logger.debug(f"API call to {model}: {prompt_tokens} prompt tokens, {completion_tokens} completion tokens, ${total_cost:.6f}")
+
+def track_anthropic_api_call(response_data: Dict[str, Any], model: str):
+    """
+    Track the cost of an Anthropic API call.
+    
+    Args:
+        response_data: The response data from the Anthropic API call
+        model: The model used for the API call
+    """
+    if not hasattr(_local, "costs"):
+        init_cost_tracker()
+    
+    # Extract usage information from the Anthropic response
+    usage = response_data.get("usage", {})
+    input_tokens = usage.get("input_tokens", 0)
+    output_tokens = usage.get("output_tokens", 0)
+    total_tokens = input_tokens + output_tokens
+    
+    # Get Anthropic pricing (per million tokens)
+    pricing = get_anthropic_model_pricing(model)
+    
+    # Calculate costs (Anthropic pricing is per million tokens)
+    input_cost = Decimal(input_tokens) * pricing['input'] / Decimal('1000000')
+    output_cost = Decimal(output_tokens) * pricing['output'] / Decimal('1000000')
+    total_cost = input_cost + output_cost
+    
+    # Update the cost tracker (mapping to existing structure)
+    _local.costs["prompt_tokens"] += input_tokens
+    _local.costs["completion_tokens"] += output_tokens
+    _local.costs["total_tokens"] += total_tokens
+    _local.costs["prompt_cost"] += input_cost
+    _local.costs["completion_cost"] += output_cost
+    _local.costs["total_cost"] += total_cost
+    _local.costs["api_calls"] += 1
+    
+    # Track usage by model
+    if model not in _local.costs["models_used"]:
+        _local.costs["models_used"][model] = {
+            "calls": 0,
+            "tokens": 0,
+            "cost": Decimal("0.0")
+        }
+    _local.costs["models_used"][model]["calls"] += 1
+    _local.costs["models_used"][model]["tokens"] += total_tokens
+    _local.costs["models_used"][model]["cost"] += total_cost
+    
+    logger.debug(f"Anthropic API call to {model}: {input_tokens} input tokens, {output_tokens} output tokens, ${total_cost:.6f}")
 
 def format_cost_summary() -> str:
     """

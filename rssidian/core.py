@@ -144,6 +144,93 @@ class RSSProcessor:
             logger.error(f"API call failed: {str(e)}")
             return None
 
+    def _call_anthropic_api(self, prompt: str, system_prompt: Optional[str] = None, model: Optional[str] = None) -> Optional[str]:
+        """
+        Call the Anthropic API with a prompt.
+
+        Args:
+            prompt: Prompt to send to the API
+            system_prompt: System prompt to use (default: config value)
+            model: Model to use (default: config value)
+
+        Returns:
+            Response from the API or None if failed
+        """
+        api_key = self.config.anthropic_api_key
+        if not api_key:
+            logger.error("Anthropic API key not configured")
+            return None
+
+        # Import cost tracker here to avoid circular imports
+        from .cost_tracker import track_anthropic_api_call
+
+        use_model = model or self.config.anthropic_model
+        use_system_prompt = system_prompt or self.config.anthropic_system_prompt
+
+        headers = {
+            "x-api-key": api_key,
+            "content-type": "application/json",
+            "anthropic-version": "2023-06-01"
+        }
+
+        data = {
+            "model": use_model,
+            "max_tokens": 4000,
+            "messages": [
+                {"role": "user", "content": prompt}
+            ]
+        }
+
+        # Add system prompt if provided
+        if use_system_prompt:
+            data["system"] = use_system_prompt
+
+        try:
+            response = requests.post(
+                "https://api.anthropic.com/v1/messages",
+                headers=headers,
+                json=data
+            )
+            response.raise_for_status()
+            response_data = response.json()
+
+            # Track the cost of this API call if enabled
+            if self.config.anthropic_cost_tracking_enabled:
+                track_anthropic_api_call(response_data, use_model)
+
+            # Extract text from content array
+            if "content" in response_data and len(response_data["content"]) > 0:
+                return response_data["content"][0]["text"]
+            else:
+                logger.error(f"Invalid Anthropic API response: {response_data}")
+                return None
+
+        except Exception as e:
+            logger.error(f"Anthropic API call failed: {str(e)}")
+            return None
+
+    def _call_ai_api(self, prompt: str, model: Optional[str] = None, system_prompt: Optional[str] = None) -> Optional[str]:
+        """
+        Call the configured AI API (OpenRouter or Anthropic) with a prompt.
+
+        Args:
+            prompt: Prompt to send to the API
+            model: Model to use (default: config value for selected provider)
+            system_prompt: System prompt to use (only used for Anthropic)
+
+        Returns:
+            Response from the API or None if failed
+        """
+        provider = self.config.ai_provider
+        
+        if provider == "anthropic":
+            return self._call_anthropic_api(prompt, system_prompt, model)
+        elif provider == "openrouter":
+            return self._call_openrouter_api(prompt, model)
+        else:
+            logger.error(f"Unknown AI provider: {provider}")
+            return None
+
     def _generate_summary(self, article: Article) -> Optional[str]:
         """
         Generate a summary for an article.
@@ -158,8 +245,19 @@ class RSSProcessor:
             logger.warning(f"Article {article.id} has no content to summarize")
             return None
 
-        prompt = self.config.openrouter_prompt.format(content=article.content)
-        return self._call_openrouter_api(prompt)
+        # Use the appropriate prompt based on provider
+        if self.config.ai_provider == "anthropic":
+            # For Anthropic, use the system prompt for instructions
+            system_prompt = """You are a helpful article summarizer.
+Given the following article content, provide:
+1. A concise 1-2 sentence summary of the key points
+2. The most important takeaway or insight"""
+            prompt = article.content
+            return self._call_ai_api(prompt, system_prompt=system_prompt)
+        else:
+            # For OpenRouter, use the existing prompt format
+            prompt = self.config.openrouter_prompt.format(content=article.content)
+            return self._call_ai_api(prompt)
 
     def _analyze_value(self, article: Article) -> Tuple[Optional[str], Optional[int], Optional[str]]:
         """
@@ -174,8 +272,13 @@ class RSSProcessor:
         if not self.config.value_prompt_enabled or not article.content:
             return None, None, None
 
-        prompt = self.config.value_prompt.format(content=article.content)
-        response = self._call_openrouter_api(prompt, self.config.openrouter_processing_model)
+        # Use the appropriate model and API based on provider
+        if self.config.ai_provider == "anthropic":
+            prompt = self.config.value_prompt.format(content=article.content)
+            response = self._call_ai_api(prompt, model=self.config.anthropic_processing_model)
+        else:
+            prompt = self.config.value_prompt.format(content=article.content)
+            response = self._call_ai_api(prompt, model=self.config.openrouter_processing_model)
 
         if not response:
             return None, None, None
@@ -513,7 +616,7 @@ Combined Content:
 
 Provide a comprehensive summary that synthesizes information from all sources."""
 
-        return self._call_openrouter_api(grouped_prompt)
+        return self._call_ai_api(grouped_prompt)
 
     def process_articles(self, batch_size: int = 10) -> Dict[str, int]:
         """
@@ -877,7 +980,10 @@ Provide a comprehensive summary that synthesizes information from all sources.""
         )
 
         # Call the API to generate the aggregated summary
-        llm_output = self._call_openrouter_api(prompt, self.config.openrouter_processing_model)
+        if self.config.ai_provider == "anthropic":
+            llm_output = self._call_ai_api(prompt, model=self.config.anthropic_processing_model)
+        else:
+            llm_output = self._call_ai_api(prompt, model=self.config.openrouter_processing_model)
 
         if llm_output and filename:
             # Process the output to replace external links with Obsidian internal links
