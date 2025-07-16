@@ -19,7 +19,7 @@ RSSidian is a powerful tool that bridges your RSS feed subscriptions with Obsidi
   - Feed statistics tracking (article count, quality ratings)
   - Configurable Obsidian markdown export
 - **AI-Powered Analysis**:
-  - Uses OpenRouter to generate customized summaries and insights
+  - Supports multiple AI providers: OpenRouter and Anthropic (with OAuth 2.0)
   - Smart content quality assessment (S/A/B/C/D tier system)
   - Value analysis with numerical scoring (1-100)
   - Configurable quality thresholds for content filtering
@@ -96,6 +96,10 @@ This creates a config file at `~/.config/rssidian/config.toml`
 Configure settings:
 
 ```toml
+[ai]
+# AI provider selection - choose between "openrouter" or "anthropic"
+provider = "openrouter"
+
 [obsidian]
 # Path to your Obsidian vault
 vault_path = "~/Documents/Obsidian"
@@ -146,6 +150,27 @@ value_prompt_enabled = true
 # Articles with lower quality tiers will be discarded
 minimum_quality_tier = "B"
 
+[anthropic]
+# Anthropic OAuth configuration (when using ai.provider = "anthropic")
+# Get these credentials from https://console.anthropic.com/
+
+# OAuth client credentials (required for OAuth)
+client_id = ""
+client_secret = ""
+
+# OAuth redirect URI (should match what you configure in Anthropic console)
+redirect_uri = "http://localhost:8080/callback"
+
+# Model configuration
+model = "claude-3-5-sonnet-20241022"
+processing_model = "claude-3-5-sonnet-20241022"
+
+# System prompt for Claude (this identifies the application as Claude Code)
+system_prompt = "You are Claude Code, Anthropic's official CLI for Claude."
+
+# Token storage file (tokens will be saved here after OAuth authentication)
+token_file = "~/.config/rssidian/anthropic_tokens.json"
+
 [annoy]
 # Path to vector index file
 index_path = "~/.config/rssidian/annoy.idx"
@@ -157,6 +182,145 @@ n_trees = 10
 metric = "angular"
 ```
 
+## Authentication
+
+RSSidian supports two AI providers for content analysis: **OpenRouter** and **Anthropic**. Choose the provider that best fits your needs:
+
+### OpenRouter (API Key)
+
+OpenRouter uses simple API key authentication:
+
+1. Get an API key from [OpenRouter](https://openrouter.ai/)
+2. Set it in your config file or environment variable:
+   ```bash
+   # In config.toml
+   [ai]
+   provider = "openrouter"
+   
+   [openrouter]
+   api_key = "your-openrouter-key"
+   
+   # Or via environment variable
+   export RSSIDIAN_OPENROUTER_API_KEY="your-openrouter-key"
+   ```
+
+### Anthropic (OAuth 2.0) - Recommended for Server Deployment
+
+Anthropic uses OAuth 2.0 authentication, which provides **long-lasting tokens** perfect for unattended server deployment. Once authenticated, RSSidian will automatically refresh tokens as needed, allowing it to run continuously without manual intervention.
+
+#### Step-by-Step OAuth Setup
+
+**Prerequisites:**
+- An Anthropic account with API access
+- Access to [Anthropic Console](https://console.anthropic.com/)
+
+**Step 1: Create OAuth Application**
+
+1. Go to [Anthropic Console](https://console.anthropic.com/)
+2. Navigate to your API settings or OAuth applications section
+3. Create a new OAuth application with these settings:
+   - **Application Name**: `RSSidian` (or your preferred name)
+   - **Redirect URI**: `http://localhost:8080/callback`
+   - **Scopes**: Select `read` and `write` permissions
+
+4. Save your application and note down:
+   - **Client ID**
+   - **Client Secret**
+
+**Step 2: Configure RSSidian**
+
+1. Edit your configuration file (`~/.config/rssidian/config.toml`):
+   ```toml
+   [ai]
+   provider = "anthropic"
+   
+   [anthropic]
+   client_id = "your-client-id-here"
+   client_secret = "your-client-secret-here"
+   redirect_uri = "http://localhost:8080/callback"
+   model = "claude-3-5-sonnet-20241022"
+   processing_model = "claude-3-5-sonnet-20241022"
+   token_file = "~/.config/rssidian/anthropic_tokens.json"
+   ```
+
+   **Security Note:** You can also set credentials via environment variables:
+   ```bash
+   export RSSIDIAN_ANTHROPIC_CLIENT_ID="your-client-id-here"
+   export RSSIDIAN_ANTHROPIC_CLIENT_SECRET="your-client-secret-here"
+   ```
+
+**Step 3: Authenticate**
+
+Run the authentication command:
+```bash
+rssidian auth
+```
+
+This will:
+1. Open your browser to Anthropic's OAuth consent page
+2. Ask you to authorize RSSidian to access your account
+3. Redirect back to RSSidian with an authorization code
+4. Exchange the code for long-lasting access and refresh tokens
+5. Save tokens securely to `~/.config/rssidian/anthropic_tokens.json`
+
+**Step 4: Verify Authentication**
+
+Test that authentication worked:
+```bash
+rssidian ingest --debug
+```
+
+You should see successful API calls to Anthropic in the debug output.
+
+#### Token Management for Server Deployment
+
+**Long-Lasting Tokens**: Anthropic OAuth tokens are designed for long-term use:
+- **Access tokens** are valid for extended periods
+- **Refresh tokens** allow automatic token renewal
+- RSSidian automatically refreshes expired tokens without user intervention
+
+**Server Deployment Best Practices**:
+
+1. **Authenticate Once**: Run `rssidian auth` during initial server setup
+2. **Secure Token Storage**: The token file (`anthropic_tokens.json`) contains sensitive credentials:
+   ```bash
+   # Set restrictive permissions
+   chmod 600 ~/.config/rssidian/anthropic_tokens.json
+   ```
+
+3. **Automated Refresh**: RSSidian handles token refresh automatically:
+   - Detects expired tokens during API calls
+   - Uses refresh token to get new access token
+   - Updates token file with new credentials
+   - Continues operation seamlessly
+
+4. **Monitoring**: Monitor your logs for authentication issues:
+   ```bash
+   rssidian ingest --debug 2>&1 | grep -i "anthropic\|auth\|token"
+   ```
+
+5. **Backup Configuration**: Keep a secure backup of your token file for disaster recovery
+
+**Troubleshooting OAuth**:
+
+- **Port 8080 in use**: If port 8080 is unavailable, update your OAuth application's redirect URI to use a different port and update the config accordingly
+- **Browser doesn't open**: Manually copy the authorization URL from the console and open it in your browser
+- **Token refresh fails**: Re-run `rssidian auth` to get fresh tokens
+
+#### Environment Variables Reference
+
+For production deployments, you can set all credentials via environment variables:
+
+```bash
+# OAuth credentials
+export RSSIDIAN_ANTHROPIC_CLIENT_ID="your-client-id"
+export RSSIDIAN_ANTHROPIC_CLIENT_SECRET="your-client-secret"
+
+# Optional: Direct token setting (if you have tokens from elsewhere)
+export RSSIDIAN_ANTHROPIC_ACCESS_TOKEN="your-access-token"
+export RSSIDIAN_ANTHROPIC_REFRESH_TOKEN="your-refresh-token"
+```
+
 ## Usage
 
 ```bash
@@ -165,6 +329,9 @@ rssidian init
 
 # Show configuration and system status
 rssidian show-config    # Displays config, vector index status, and article stats
+
+# Authenticate with AI providers (required for Anthropic)
+rssidian auth           # Start OAuth flow for Anthropic, or show info for OpenRouter
 
 # Import and export feeds in OPML format
 rssidian opml import path/to/subscriptions.opml           # Import feeds from OPML file
@@ -384,7 +551,9 @@ Claude will automatically use the RSSidian MCP service to access your RSS conten
 ## Requirements
 
 - Python 3.9+
-- OpenRouter API access
+- AI Provider access (choose one):
+  - **OpenRouter API** - Simple API key authentication
+  - **Anthropic API** - OAuth 2.0 authentication (recommended for server deployment)
 - OPML file with RSS subscriptions
 - Obsidian vault (optional)
 
