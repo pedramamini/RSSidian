@@ -191,6 +191,73 @@ Article Summaries:
 {summaries}
 """
         return self.get("openrouter", "aggregator_prompt", default_prompt)
+    
+    # AI Provider Selection
+    @property
+    def ai_provider(self) -> str:
+        """Get AI provider (openrouter or anthropic)."""
+        return self.get("ai", "provider", "openrouter")
+    
+    # Anthropic OAuth Configuration
+    @property
+    def anthropic_client_id(self) -> Optional[str]:
+        """Get Anthropic OAuth client ID."""
+        env_client_id = os.environ.get("RSSIDIAN_ANTHROPIC_CLIENT_ID")
+        if env_client_id:
+            return env_client_id
+        return self.get("anthropic", "client_id")
+    
+    @property
+    def anthropic_client_secret(self) -> Optional[str]:
+        """Get Anthropic OAuth client secret."""
+        env_client_secret = os.environ.get("RSSIDIAN_ANTHROPIC_CLIENT_SECRET")
+        if env_client_secret:
+            return env_client_secret
+        return self.get("anthropic", "client_secret")
+    
+    @property
+    def anthropic_redirect_uri(self) -> str:
+        """Get Anthropic OAuth redirect URI."""
+        return self.get("anthropic", "redirect_uri", "http://localhost:8080/callback")
+    
+    @property
+    def anthropic_model(self) -> str:
+        """Get Anthropic model."""
+        return self.get("anthropic", "model", "claude-3-5-sonnet-20241022")
+    
+    @property
+    def anthropic_processing_model(self) -> str:
+        """Get Anthropic processing model."""
+        return self.get("anthropic", "processing_model", "claude-3-5-sonnet-20241022")
+    
+    @property
+    def anthropic_system_prompt(self) -> str:
+        """Get Anthropic system prompt."""
+        return self.get("anthropic", "system_prompt", "You are Claude Code, Anthropic's official CLI for Claude.")
+    
+    @property
+    def anthropic_access_token(self) -> Optional[str]:
+        """Get Anthropic OAuth access token."""
+        env_token = os.environ.get("RSSIDIAN_ANTHROPIC_ACCESS_TOKEN")
+        if env_token:
+            return env_token
+        return self.get("anthropic", "access_token")
+    
+    @property
+    def anthropic_refresh_token(self) -> Optional[str]:
+        """Get Anthropic OAuth refresh token."""
+        env_token = os.environ.get("RSSIDIAN_ANTHROPIC_REFRESH_TOKEN")
+        if env_token:
+            return env_token
+        return self.get("anthropic", "refresh_token")
+    
+    @property
+    def anthropic_token_file(self) -> str:
+        """Get path to Anthropic token file."""
+        path = self.get("anthropic", "token_file", "~/.config/rssidian/anthropic_tokens.json")
+        expanded_path = os.path.expanduser(path)
+        os.makedirs(os.path.dirname(expanded_path), exist_ok=True)
+        return expanded_path
 
 
 def init_config() -> None:
