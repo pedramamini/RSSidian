@@ -278,3 +278,7 @@ token_file = "~/.config/rssidian/anthropic_tokens.json"
 # RSSIDIAN_ANTHROPIC_CLIENT_SECRET
 # RSSIDIAN_ANTHROPIC_ACCESS_TOKEN
 # RSSIDIAN_ANTHROPIC_REFRESH_TOKEN
+
+# Whether to analyze articles during ingestion for better performance
+analyze_during_ingestion = true
+

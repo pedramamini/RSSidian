@@ -583,7 +583,7 @@ class RSSProcessor:
 
     def _calculate_title_similarity(self, title1: str, title2: str) -> float:
         """
-        Calculate similarity between two article titles using string similarity.
+        Calculate similarity between two article titles using enhanced string similarity.
         
         Args:
             title1: First article title
@@ -600,8 +600,10 @@ class RSSProcessor:
             # Convert to lowercase and remove common words/punctuation
             title = title.lower()
             # Remove common prefixes and suffixes
-            title = re.sub(r'^(breaking|exclusive|update|news|report):\s*', '', title)
+            title = re.sub(r'^(breaking|exclusive|update|news|report|analysis):\s*', '', title)
             title = re.sub(r'\s*\(.*?\)\s*', '', title)  # Remove parenthetical content
+            # Remove common news suffixes like source attribution
+            title = re.sub(r'\s*[-–—]\s*[^-–—]*$', '', title)  # Remove "- Source Name" type suffixes
             title = re.sub(r'[^\w\s]', ' ', title)  # Remove punctuation
             title = re.sub(r'\s+', ' ', title).strip()  # Normalize whitespace
             return title
@@ -616,15 +618,20 @@ class RSSProcessor:
         if not words1 or not words2:
             return 0.0
             
+        # Remove common stop words that don't add semantic meaning
+        stop_words = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should', 'may', 'might', 'must', 'can', 'its', 'it', 'that', 'this', 'these', 'those', 'from', 'up', 'out', 'down', 'off', 'over', 'under', 'again', 'further', 'then', 'once', 'here', 'there', 'when', 'where', 'why', 'how', 'all', 'any', 'both', 'each', 'few', 'more', 'most', 'other', 'some', 'such', 'no', 'nor', 'not', 'only', 'own', 'same', 'so', 'than', 'too', 'very', 'just', 'now'}
+        words1 = words1 - stop_words
+        words2 = words2 - stop_words
+        
         # Jaccard similarity (intersection over union)
         intersection = len(words1 & words2)
         union = len(words1 | words2)
         jaccard = intersection / union if union > 0 else 0.0
         
-        # Also check for key entity overlaps (company names, dollar amounts, etc.)
-        # Look for uppercase words, dollar amounts, percentages, etc.
-        entities1 = set(re.findall(r'\b[A-Z][a-z]+\b|\$[\d,]+[BMK]?|\d+%', title1))
-        entities2 = set(re.findall(r'\b[A-Z][a-z]+\b|\$[\d,]+[BMK]?|\d+%', title2))
+        # Enhanced entity overlap detection
+        # Look for company names, proper nouns, dollar amounts, percentages, etc.
+        entities1 = set(re.findall(r'\b[A-Z][a-z]+(?:[A-Z][a-z]*)*\b|\$[\d,]+[BMK]?|\d+%|\b\d+\b', title1))
+        entities2 = set(re.findall(r'\b[A-Z][a-z]+(?:[A-Z][a-z]*)*\b|\$[\d,]+[BMK]?|\d+%|\b\d+\b', title2))
         
         entity_overlap = 0.0
         if entities1 and entities2:
@@ -632,8 +639,100 @@ class RSSProcessor:
             entity_union = len(entities1 | entities2)
             entity_overlap = entity_intersection / entity_union if entity_union > 0 else 0.0
         
-        # Weighted combination of jaccard and entity overlap
-        return 0.7 * jaccard + 0.3 * entity_overlap
+        # Calculate semantic similarity using key phrases
+        def extract_key_phrases(title):
+            # Extract multi-word phrases that might be semantically important
+            phrases = []
+            words = title.split()
+            # Extract 2-3 word phrases
+            for i in range(len(words) - 1):
+                if len(words[i]) > 2 and len(words[i + 1]) > 2:  # Skip short words
+                    phrases.append(f"{words[i]} {words[i + 1]}")
+                if i < len(words) - 2 and len(words[i]) > 2 and len(words[i + 1]) > 2 and len(words[i + 2]) > 2:
+                    phrases.append(f"{words[i]} {words[i + 1]} {words[i + 2]}")
+            return set(phrases)
+        
+        phrases1 = extract_key_phrases(norm_title1)
+        phrases2 = extract_key_phrases(norm_title2)
+        
+        phrase_overlap = 0.0
+        if phrases1 and phrases2:
+            phrase_intersection = len(phrases1 & phrases2)
+            phrase_union = len(phrases1 | phrases2)
+            phrase_overlap = phrase_intersection / phrase_union if phrase_union > 0 else 0.0
+        
+        # Check for synonym/variation patterns common in news
+        synonym_boost = 0.0
+        synonyms = [
+            {'delay', 'postpone', 'push back', 'reschedule'},
+            {'announce', 'reveal', 'unveil', 'disclose'},
+            {'launch', 'release', 'debut', 'introduce'},
+            {'again', 'once more', 'another'},
+            {'model', 'system', 'ai'},
+            {'open', 'open-source', 'open-weight'}
+        ]
+        
+        for synonym_set in synonyms:
+            if any(word in norm_title1 for word in synonym_set) and any(word in norm_title2 for word in synonym_set):
+                synonym_boost += 0.1
+        
+        # Weighted combination: prioritize word overlap, then entities, then phrases
+        base_similarity = 0.5 * jaccard + 0.3 * entity_overlap + 0.2 * phrase_overlap
+        
+        # Apply synonym boost
+        final_similarity = min(1.0, base_similarity + synonym_boost)
+        
+        return final_similarity
+
+    def _calculate_url_similarity(self, url1: str, url2: str) -> float:
+        """
+        Calculate similarity between two URLs based on domain and path.
+        
+        Args:
+            url1: First article URL
+            url2: Second article URL
+            
+        Returns:
+            Similarity score between 0 and 1
+        """
+        if not url1 or not url2:
+            return 0.0
+            
+        try:
+            from urllib.parse import urlparse
+            
+            parsed1 = urlparse(url1)
+            parsed2 = urlparse(url2)
+            
+            # Same domain gets a boost
+            domain_similarity = 0.0
+            if parsed1.netloc == parsed2.netloc:
+                domain_similarity = 1.0
+            elif parsed1.netloc and parsed2.netloc:
+                # Check for subdomain similarity (e.g., techcrunch.com vs www.techcrunch.com)
+                domain1 = parsed1.netloc.replace('www.', '').lower()
+                domain2 = parsed2.netloc.replace('www.', '').lower()
+                if domain1 == domain2:
+                    domain_similarity = 1.0
+                elif domain1 in domain2 or domain2 in domain1:
+                    domain_similarity = 0.8
+            
+            # Path similarity (for articles on same domain with similar paths)
+            path_similarity = 0.0
+            if parsed1.path and parsed2.path and domain_similarity > 0:
+                path1_parts = set(parsed1.path.strip('/').split('/'))
+                path2_parts = set(parsed2.path.strip('/').split('/'))
+                if path1_parts and path2_parts:
+                    path_intersection = len(path1_parts & path2_parts)
+                    path_union = len(path1_parts | path2_parts)
+                    path_similarity = path_intersection / path_union if path_union > 0 else 0.0
+            
+            # Weight domain similarity heavily, path similarity lightly
+            return 0.8 * domain_similarity + 0.2 * path_similarity
+            
+        except Exception:
+            # If URL parsing fails, return 0
+            return 0.0
 
     def _store_embedding(self, article_id: int, embedding: List[float]) -> None:
         """
@@ -741,7 +840,7 @@ class RSSProcessor:
             return []
 
     def _find_title_similar_articles(self, article: Article, threshold: float) -> List[Article]:
-        """Find articles similar by title using string similarity."""
+        """Find articles similar by title and URL using enhanced similarity detection."""
         if not article.title:
             return []
 
@@ -755,11 +854,23 @@ class RSSProcessor:
             similar_articles = []
             for other_article in recent_articles:
                 if other_article.title:
+                    # Calculate title similarity
                     title_similarity = self._calculate_title_similarity(article.title, other_article.title)
-                    # Use a slightly lower threshold for title similarity since it's less precise
-                    title_threshold = max(0.6, threshold - 0.1)
-                    if title_similarity >= title_threshold:
-                        logger.info(f"Title similarity {title_similarity:.2f} between '{article.title}' and '{other_article.title}'")
+                    
+                    # Calculate URL similarity
+                    url_similarity = self._calculate_url_similarity(article.url, other_article.url)
+                    
+                    # Combined similarity score - weight title more heavily
+                    combined_similarity = 0.8 * title_similarity + 0.2 * url_similarity
+                    
+                    # Use adaptive threshold: lower for title similarity since it's enhanced
+                    # Also give boost if URLs are from same domain
+                    effective_threshold = threshold - 0.15  # More lenient than before
+                    if url_similarity > 0.8:  # Same domain
+                        effective_threshold -= 0.1  # Even more lenient for same-domain articles
+                    
+                    if combined_similarity >= effective_threshold:
+                        logger.info(f"Combined similarity {combined_similarity:.2f} (title: {title_similarity:.2f}, url: {url_similarity:.2f}) between '{article.title}' and '{other_article.title}'")
                         similar_articles.append(other_article)
 
             return similar_articles
@@ -1481,36 +1592,71 @@ Provide a comprehensive summary that synthesizes information from all sources.""
                     if article.summary:
                         summary_items.append(f"{article.summary}\n")
                 else:
-                    # Multiple articles with same summary - display as grouped
-                    logger.info(f"Displaying {len(articles_in_group)} similar articles as a group")
+                    # Multiple articles with same summary - display as merged story
+                    logger.info(f"Displaying {len(articles_in_group)} similar articles as a merged story")
                     
-                    # Create a title that represents the group - use the shortest/clearest title
+                    # Create a comprehensive title by finding the most detailed/informative one
                     titles = [a.title for a in articles_in_group if a.title]
                     if titles:
-                        # Sort by length and pick the shortest (usually clearer)
-                        best_title = min(titles, key=len)
-                        summary_items.append(f"### {best_title}")
+                        # Sort by length (descending) and informativeness to pick the most detailed title
+                        detailed_title = max(titles, key=lambda t: (len(t), t.count(' ')))
+                        # Extract the primary source from the first (highest quality) article
+                        first_article = articles_in_group[0]
+                        primary_feed = self.db_session.query(Feed).filter_by(id=first_article.feed_id).first()
+                        primary_source = primary_feed.title if primary_feed else "Unknown Feed"
+                        
+                        # Format like user's example: "Title (Primary Source/Author)"
+                        summary_items.append(f"### {detailed_title}")
                     else:
                         summary_items.append(f"### Similar Articles ({len(articles_in_group)} sources)")
                     
-                    # Show all sources in a cleaner format
-                    source_lines = []
+                    # Create source metadata line combining all sources
+                    source_info = []
+                    all_dates = []
+                    all_tiers = []
+                    
                     for article in articles_in_group:
                         feed = self.db_session.query(Feed).filter_by(id=article.feed_id).first()
                         feed_name = feed.title if feed else "Unknown Feed"
-                        tier_display = f"{article.quality_tier}-Tier" if article.quality_tier else ""
-                        date_display = article.published_at.strftime("%Y-%m-%d") if article.published_at else "Unknown date"
-                        source_lines.append(f"*{feed_name} | {date_display} | {tier_display}*")
-                        source_lines.append("")
-                        source_lines.append(article.url)
-                        source_lines.append("")
+                        source_info.append(feed_name)
+                        
+                        if article.published_at:
+                            all_dates.append(article.published_at)
+                        if article.quality_tier:
+                            all_tiers.append(article.quality_tier)
                     
-                    summary_items.append("\n".join(source_lines))
-
-                    # Use the summary from the best/first article
+                    # Use most recent date and best quality tier
+                    best_date = max(all_dates).strftime("%Y-%m-%d") if all_dates else "Unknown date"
+                    best_tier = min(all_tiers, key=lambda t: ["S", "A", "B", "C", "D"].index(t)) if all_tiers else ""
+                    tier_display = f"{best_tier}-Tier" if best_tier else ""
+                    
+                    # Create sources line showing multiple sources
+                    if len(source_info) > 1:
+                        sources_display = f"Multiple sources | {best_date} | {tier_display}"
+                    else:
+                        sources_display = f"{source_info[0]} | {best_date} | {tier_display}"
+                    
+                    summary_items.append(f"*{sources_display}*")
+                    summary_items.append("")
+                    
+                    # List all article URLs
+                    for article in articles_in_group:
+                        summary_items.append(article.url)
+                        summary_items.append("")
+                    
+                    # Use the summary from the best/first article, or combined summary if available
                     best_article = articles_in_group[0]  # Already sorted by quality
                     if best_article.summary:
                         summary_items.append(f"{best_article.summary}\n")
+                    
+                    # Add source attribution at the end for merged stories
+                    if len(articles_in_group) > 1:
+                        source_attribution = []
+                        for i, article in enumerate(articles_in_group, 1):
+                            feed = self.db_session.query(Feed).filter_by(id=article.feed_id).first()
+                            feed_name = feed.title if feed else "Unknown Feed"
+                            source_attribution.append(f"Source {i}: {feed_name}")
+                        summary_items.append(f"*Sources: {', '.join(source_attribution)}*\n")
 
         # Build feed stats
         feed_stats_dict = defaultdict(lambda: {"total": 0, "accepted": 0})
