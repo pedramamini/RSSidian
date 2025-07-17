@@ -245,5 +245,8 @@ default_lookback = 7
 # Maximum articles to process per feed during ingestion
 max_articles_per_feed = 25
 
-# Settings for duplicate/similar article detection
-similarity_threshold = 0.70  # Higher values mean stricter matching (0.70 = 70% similarity)
+# Settings for duplicate/similar article detection and story merging
+similarity_threshold = 0.65  # Lower value for better story merging (0.65 = 65% similarity)
+
+# Whether to analyze articles during ingestion for better performance
+analyze_during_ingestion = true
