@@ -470,6 +470,128 @@ def disable_peer_through(ctx, feed_title):
     db_session.close()
 
 
+@subscriptions.command("add")
+@click.argument("url")
+@click.option("--title", help="Custom title for the feed")
+@click.option("--description", help="Custom description for the feed")
+@click.option("--validate/--no-validate", default=True, help="Validate feed before adding (default: validate)")
+@click.pass_context
+def add_feed(ctx, url, title, description, validate):
+    """Add a new RSS feed subscription."""
+    config = ctx.obj["config"]
+    db_session = ensure_db_exists(config)
+    
+    # Import models here
+    from .models import Feed
+    import feedparser
+    import requests
+    
+    try:
+        # Check if feed already exists
+        existing_feed = db_session.query(Feed).filter_by(url=url).first()
+        if existing_feed:
+            console.print(f"[bold red]Feed already exists:[/bold red] {existing_feed.title}")
+            db_session.close()
+            return
+        
+        feed_title = title
+        feed_description = description
+        website_url = None
+        
+        # Validate and extract metadata if requested
+        if validate:
+            console.print(f"[yellow]Validating feed:[/yellow] {url}")
+            
+            try:
+                # Try to fetch and parse the feed
+                headers = {
+                    'User-Agent': (
+                        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+                        '(KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+                    )
+                }
+                response = requests.get(url, headers=headers, timeout=30)
+                response.raise_for_status()
+                
+                feed_data = feedparser.parse(response.content)
+                
+                # Check if parsing was successful
+                if hasattr(feed_data, 'bozo') and feed_data.bozo:
+                    if (hasattr(feed_data, 'bozo_exception') and 
+                        not isinstance(feed_data.bozo_exception, feedparser.CharacterEncodingOverride)):
+                        console.print(f"[bold red]Feed validation warning:[/bold red] {feed_data.bozo_exception}")
+                
+                # Extract feed metadata if not provided by user
+                if hasattr(feed_data, 'feed'):
+                    if not feed_title and hasattr(feed_data.feed, 'title'):
+                        feed_title = feed_data.feed.title
+                    if not feed_description and hasattr(feed_data.feed, 'description'):
+                        feed_description = feed_data.feed.description
+                    if hasattr(feed_data.feed, 'link'):
+                        website_url = feed_data.feed.link
+                
+                # Check if feed has entries
+                if not feed_data.entries:
+                    console.print("[yellow]Warning: Feed appears to have no entries[/yellow]")
+                else:
+                    console.print(f"[green]Feed validated successfully[/green] - Found {len(feed_data.entries)} entries")
+                
+            except requests.exceptions.RequestException as e:
+                console.print(f"[bold red]Feed validation failed:[/bold red] {str(e)}")
+                if not click.confirm("Continue adding feed anyway?"):
+                    db_session.close()
+                    return
+            except Exception as e:
+                console.print(f"[bold red]Feed validation error:[/bold red] {str(e)}")
+                if not click.confirm("Continue adding feed anyway?"):
+                    db_session.close()
+                    return
+        
+        # Use URL as title if no title was provided or extracted
+        if not feed_title:
+            feed_title = url
+        
+        # Create new feed
+        new_feed = Feed(
+            title=feed_title,
+            url=url,
+            description=feed_description,
+            website_url=website_url
+        )
+        
+        # Add to database
+        db_session.add(new_feed)
+        db_session.commit()
+        
+        # Show success message with feed details
+        console.print(Panel.fit(
+            "[bold green]Feed added successfully![/bold green]", 
+            border_style="green"
+        ))
+        
+        # Create summary table
+        summary_table = Table(show_header=False, box=box.SIMPLE)
+        summary_table.add_column("Field", style="cyan")
+        summary_table.add_column("Value")
+        
+        summary_table.add_row("Title", feed_title)
+        summary_table.add_row("URL", url)
+        if feed_description:
+            # Truncate long descriptions
+            display_desc = feed_description[:100] + "..." if len(feed_description) > 100 else feed_description
+            summary_table.add_row("Description", display_desc)
+        if website_url:
+            summary_table.add_row("Website", website_url)
+        summary_table.add_row("Validated", "[green]Yes[/green]" if validate else "[yellow]No[/yellow]")
+        
+        console.print(summary_table)
+        
+    except Exception as e:
+        console.print(f"[bold red]Error adding feed:[/bold red] {str(e)}")
+    finally:
+        db_session.close()
+
+
 @cli.command()
 @click.option("--lookback", type=int, help="Number of days to look back for articles")
 @click.option("--debug/--no-debug", default=False, help="Enable debug output")
