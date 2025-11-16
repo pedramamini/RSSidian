@@ -213,6 +213,104 @@ def subscriptions():
     pass
 
 
+@subscriptions.command("add")
+@click.argument("feed_url")
+@click.option("--title", help="Feed title (auto-detected if not provided)")
+@click.option("--force", is_flag=True, help="Force update if feed already exists")
+@click.pass_context
+def add_subscription(ctx, feed_url, title, force):
+    """Add a new RSS feed subscription."""
+    config = ctx.obj["config"]
+    db_session = ensure_db_exists(config)
+
+    console.print(f"Adding feed: [bold]{feed_url}[/bold]")
+
+    try:
+        # Import modules here
+        from .models import Feed
+        import feedparser
+        import requests
+
+        # Check if feed already exists
+        existing_feed = db_session.query(Feed).filter_by(url=feed_url).first()
+
+        if existing_feed and not force:
+            console.print(f"[yellow]Feed already exists:[/yellow] {existing_feed.title}")
+            console.print(f"Use --force to update the existing feed")
+            db_session.close()
+            return
+
+        # Fetch and parse the feed to validate it and get metadata
+        console.print("Validating feed...")
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+
+        try:
+            response = requests.get(feed_url, headers=headers, timeout=30)
+            response.raise_for_status()
+            feed_data = feedparser.parse(response.content)
+        except requests.exceptions.RequestException as e:
+            console.print(f"[red]Error fetching feed:[/red] {str(e)}")
+            db_session.close()
+            return
+
+        # Check if the feed was parsed successfully
+        if hasattr(feed_data, 'bozo') and feed_data.bozo:
+            if hasattr(feed_data, 'bozo_exception'):
+                console.print(f"[yellow]Warning:[/yellow] Feed parsing issue: {str(feed_data.bozo_exception)}")
+
+        # Extract feed metadata
+        feed_title = title or feed_data.feed.get('title', 'Unknown Feed')
+        feed_description = feed_data.feed.get('description', '')
+        feed_website_url = feed_data.feed.get('link', '')
+
+        # Create or update feed
+        if existing_feed:
+            console.print(f"Updating existing feed: [bold]{existing_feed.title}[/bold]")
+            existing_feed.title = feed_title
+            existing_feed.description = feed_description
+            existing_feed.website_url = feed_website_url
+            existing_feed.last_updated = datetime.utcnow()
+            db_session.commit()
+
+            console.print(Panel.fit(
+                f"[bold green]Feed Updated Successfully[/bold green]\n\n"
+                f"Title: {feed_title}\n"
+                f"URL: {feed_url}\n"
+                f"Website: {feed_website_url}",
+                border_style="green"
+            ))
+        else:
+            new_feed = Feed(
+                title=feed_title,
+                url=feed_url,
+                description=feed_description,
+                website_url=feed_website_url,
+                last_updated=datetime.utcnow(),
+                last_checked=datetime.utcnow()
+            )
+            db_session.add(new_feed)
+            db_session.commit()
+
+            console.print(Panel.fit(
+                f"[bold green]Feed Added Successfully[/bold green]\n\n"
+                f"Title: {feed_title}\n"
+                f"URL: {feed_url}\n"
+                f"Website: {feed_website_url}",
+                border_style="green"
+            ))
+
+        # Show feed statistics
+        total_feeds = db_session.query(Feed).count()
+        console.print(f"\n[dim]Total feeds in database:[/dim] [bold]{total_feeds}[/bold]")
+
+    except Exception as e:
+        console.print(f"[bold red]Error adding feed:[/bold red] {str(e)}")
+        import traceback
+        console.print(f"[dim]{traceback.format_exc()}[/dim]")
+    finally:
+        db_session.close()
+
+
 @subscriptions.command("list")
 @click.option("--sort", type=click.Choice(["title", "updated", "articles", "rating"]), default="title",
               help="Sort subscriptions by field")
