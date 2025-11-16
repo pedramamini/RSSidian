@@ -6,6 +6,7 @@ RSSidian is a powerful tool that bridges your RSS feed subscriptions with Obsidi
 
 - **OPML Integration**:
   - Automatically imports RSS subscriptions from OPML files
+  - Direct feed addition via command line (no OPML required)
   - Smart feed management with mute/unmute capabilities
   - Easy subscription organization and article listing
 - **RSS Feed Processing**:
@@ -172,12 +173,15 @@ rssidian opml export path/to/export.opml                  # Export all feeds
 rssidian opml export path/to/export.opml --exclude-muted  # Export only active feeds (exclude muted)
 
 # Manage feed subscriptions
-rssidian subscriptions list                  # List all subscriptions (sorted alphabetically)
-rssidian subscriptions list --sort=articles  # List all subscriptions (sorted by article count)
-rssidian subscriptions list --sort=rating    # List all subscriptions (sorted by quality rating)
-rssidian subscriptions list --sort=updated   # List all subscriptions (sorted by last update date)
-rssidian subscriptions mute "Feed Title"     # Mute a feed (skip during ingestion)
-rssidian subscriptions unmute "Feed Title"   # Unmute a feed
+rssidian subscriptions add <feed_url>                      # Add a new RSS feed subscription
+rssidian subscriptions add <feed_url> --title "My Feed"    # Add feed with custom title
+rssidian subscriptions add <feed_url> --force              # Update existing feed metadata
+rssidian subscriptions list                                # List all subscriptions (sorted alphabetically)
+rssidian subscriptions list --sort=articles                # List all subscriptions (sorted by article count)
+rssidian subscriptions list --sort=rating                  # List all subscriptions (sorted by quality rating)
+rssidian subscriptions list --sort=updated                 # List all subscriptions (sorted by last update date)
+rssidian subscriptions mute "Feed Title"                   # Mute a feed (skip during ingestion)
+rssidian subscriptions unmute "Feed Title"                 # Unmute a feed
 
 # Process new articles (last 7 days by default)
 rssidian ingest
