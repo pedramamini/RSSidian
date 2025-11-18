@@ -96,6 +96,51 @@ def init():
     ))
 
 
+@cli.command()
+@click.pass_context
+def auth(ctx):
+    """Authenticate with AI providers (currently supports Anthropic OAuth)."""
+    config = ctx.obj["config"]
+    
+    if config.ai_provider == "anthropic":
+        console.print("[bold blue]Starting Anthropic OAuth authentication...[/bold blue]")
+        
+        # Import the core module here to avoid loading at startup
+        from .core import RSSProcessor
+        from .models import init_db
+        
+        # Initialize database connection
+        db_session = init_db(config.db_path)
+        
+        try:
+            processor = RSSProcessor(config, db_session)
+            success = processor.authenticate_anthropic()
+            
+            if success:
+                console.print(Panel.fit(
+                    "[bold green]Successfully authenticated with Anthropic![/bold green]\n"
+                    "You can now use Anthropic models for content analysis.",
+                    border_style="green"
+                ))
+            else:
+                console.print(Panel.fit(
+                    "[bold red]Authentication failed![/bold red]\n"
+                    "Please check your OAuth credentials and try again.",
+                    border_style="red"
+                ))
+        finally:
+            db_session.close()
+    
+    elif config.ai_provider == "openrouter":
+        console.print("[yellow]OpenRouter uses API key authentication.[/yellow]")
+        console.print("Please set your API key in the configuration file or environment variable.")
+        console.print("See the config.toml.example file for details.")
+    
+    else:
+        console.print(f"[red]Unknown AI provider: {config.ai_provider}[/red]")
+        console.print("Please check your configuration file.")
+
+
 @cli.group()
 def opml():
     """Import and export feeds in OPML format."""
