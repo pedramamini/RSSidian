@@ -386,13 +386,61 @@ class RSSProcessor:
             article_id: ID of the article
             embedding: Embedding vector
         """
-        if self._vector_index is None:
-            self._load_or_create_index()
+        # Buffer embeddings for batch rebuild (Annoy indices are immutable after build)
+        if not hasattr(self, '_pending_embeddings'):
+            self._pending_embeddings = {}
+        self._pending_embeddings[article_id] = embedding
 
-        if self._vector_index:
-            self._vector_index.add_item(article_id, embedding)
-            self._vector_index.build(self.config.annoy_n_trees)
-            self._vector_index.save(self.config.annoy_index_path)
+    def _flush_embeddings(self) -> int:
+        """
+        Rebuild the Annoy index from all embedding vectors stored in the database.
+
+        Annoy indices are immutable after build(), so we must rebuild from scratch
+        whenever new embeddings are added. Embedding vectors are persisted in the
+        Article.embedding_vector column so rebuilds don't require re-computation.
+
+        Returns:
+            Number of new embeddings added in this batch
+        """
+        pending = getattr(self, '_pending_embeddings', {})
+        if not pending:
+            return 0
+
+        # Persist pending vectors to the database
+        for article_id, embedding in pending.items():
+            article = self.db_session.query(Article).filter_by(id=article_id).first()
+            if article:
+                article.embedding_vector = json.dumps(embedding)
+        self.db_session.commit()
+
+        # Rebuild the full index from all stored vectors
+        embedding_dim = 768  # all-mpnet-base-v2 dimension
+        new_index = AnnoyIndex(embedding_dim, self.config.annoy_metric)
+
+        articles_with_vectors = self.db_session.query(Article).filter(
+            Article.embedding_generated == True,
+            Article.embedding_vector.isnot(None)
+        ).all()
+
+        indexed = 0
+        for article in articles_with_vectors:
+            try:
+                vector = json.loads(article.embedding_vector)
+                new_index.add_item(article.id, vector)
+                indexed += 1
+            except (json.JSONDecodeError, TypeError) as e:
+                logger.warning(f"Skipping article {article.id}: bad embedding vector: {e}")
+
+        if indexed > 0:
+            new_index.build(self.config.annoy_n_trees)
+            new_index.save(self.config.annoy_index_path)
+            logger.info(f"Rebuilt vector index with {indexed} embeddings ({len(pending)} new)")
+
+        # Clear state for next batch
+        self._vector_index = None  # Lazy-reload on next search
+        self._pending_embeddings = {}
+
+        return len(pending)
 
     def _load_or_create_index(self) -> None:
         """Load the existing Annoy index or create a new one."""
@@ -685,6 +733,11 @@ Provide a comprehensive summary that synthesizes information from all sources.""
                     logger.error(f"Error generating embedding for article {article.id}: {str(e)}")
                 progress.update(embedding_task, advance=1)
             
+            # Flush all pending embeddings to the Annoy index in one batch rebuild
+            logger.info("Building vector index with new embeddings...")
+            self._flush_embeddings()
+            self.db_session.commit()
+
             # Step 2: Group similar articles after embeddings are generated
             logger.info(f"Grouping {len(unprocessed)} articles by similarity...")
             article_groups = self._group_similar_articles(unprocessed)

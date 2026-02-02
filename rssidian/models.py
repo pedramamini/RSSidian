@@ -59,6 +59,7 @@ class Article(Base):
     quality_score = Column(Integer, nullable=True)  # 1-100
     labels = Column(String(255), nullable=True)
     embedding_generated = Column(Boolean, default=False)
+    embedding_vector = Column(Text, nullable=True)  # JSON-serialized embedding vector
     word_count = Column(Integer, nullable=True)
     jina_enhanced = Column(Boolean, default=False)  # Flag to indicate if content was fetched from Jina.ai
     
@@ -73,6 +74,16 @@ def init_db(db_path: str) -> Session:
     """Initialize database and return session."""
     engine = create_engine(f"sqlite:///{db_path}")
     Base.metadata.create_all(engine)
+
+    # Migrate: add embedding_vector column if missing (existing databases)
+    from sqlalchemy import inspect, text
+    inspector = inspect(engine)
+    columns = [col["name"] for col in inspector.get_columns("articles")]
+    if "embedding_vector" not in columns:
+        with engine.connect() as conn:
+            conn.execute(text("ALTER TABLE articles ADD COLUMN embedding_vector TEXT"))
+            conn.commit()
+
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     return SessionLocal()
 
@@ -80,5 +91,15 @@ def init_db(db_path: str) -> Session:
 def get_db_session(db_path: str) -> Session:
     """Get a database session."""
     engine = create_engine(f"sqlite:///{db_path}")
+
+    # Migrate: add embedding_vector column if missing (existing databases)
+    from sqlalchemy import inspect, text
+    inspector = inspect(engine)
+    columns = [col["name"] for col in inspector.get_columns("articles")]
+    if "embedding_vector" not in columns:
+        with engine.connect() as conn:
+            conn.execute(text("ALTER TABLE articles ADD COLUMN embedding_vector TEXT"))
+            conn.commit()
+
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     return SessionLocal()
