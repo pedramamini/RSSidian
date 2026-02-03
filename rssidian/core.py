@@ -1,6 +1,14 @@
 import os
 import json
 import time
+import secrets
+import hashlib
+import base64
+import urllib.parse
+import webbrowser
+import http.server
+import socketserver
+import threading
 from typing import List, Dict, Any, Optional, Tuple, Callable, Union
 from datetime import datetime, timedelta
 import logging
@@ -31,6 +39,285 @@ QUALITY_TIERS = {
 }
 
 
+class AnthropicOAuthClient:
+    """OAuth client for Anthropic API."""
+    
+    def __init__(self, config: Config):
+        """Initialize the OAuth client with configuration."""
+        self.config = config
+        self.client_id = config.anthropic_client_id
+        self.client_secret = config.anthropic_client_secret
+        self.redirect_uri = config.anthropic_redirect_uri
+        self.token_file = config.anthropic_token_file
+        self.auth_url = "https://console.anthropic.com/oauth/authorize"
+        self.token_url = "https://api.anthropic.com/oauth/token"
+        self.api_base = "https://api.anthropic.com"
+        self._access_token = None
+        self._refresh_token = None
+        self._load_tokens()
+    
+    def _generate_pkce_challenge(self) -> Tuple[str, str]:
+        """Generate PKCE code verifier and challenge."""
+        code_verifier = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode('utf-8').rstrip('=')
+        code_challenge = base64.urlsafe_b64encode(
+            hashlib.sha256(code_verifier.encode('utf-8')).digest()
+        ).decode('utf-8').rstrip('=')
+        return code_verifier, code_challenge
+    
+    def _load_tokens(self):
+        """Load tokens from file or config."""
+        # First try config/environment
+        if self.config.anthropic_access_token:
+            self._access_token = self.config.anthropic_access_token
+            self._refresh_token = self.config.anthropic_refresh_token
+            return
+        
+        # Then try token file
+        if os.path.exists(self.token_file):
+            try:
+                with open(self.token_file, 'r') as f:
+                    tokens = json.load(f)
+                    self._access_token = tokens.get('access_token')
+                    self._refresh_token = tokens.get('refresh_token')
+                    logger.info("Loaded Anthropic tokens from file")
+            except Exception as e:
+                logger.error(f"Failed to load tokens from file: {str(e)}")
+    
+    def _save_tokens(self, access_token: str, refresh_token: str):
+        """Save tokens to file."""
+        self._access_token = access_token
+        self._refresh_token = refresh_token
+        
+        try:
+            with open(self.token_file, 'w') as f:
+                json.dump({
+                    'access_token': access_token,
+                    'refresh_token': refresh_token,
+                    'updated_at': datetime.utcnow().isoformat()
+                }, f, indent=2)
+            logger.info("Saved Anthropic tokens to file")
+        except Exception as e:
+            logger.error(f"Failed to save tokens to file: {str(e)}")
+    
+    def get_authorization_url(self) -> Tuple[str, str]:
+        """Get OAuth authorization URL and code verifier."""
+        if not self.client_id:
+            raise ValueError("Anthropic client_id not configured")
+        
+        code_verifier, code_challenge = self._generate_pkce_challenge()
+        state = secrets.token_urlsafe(32)
+        
+        params = {
+            'client_id': self.client_id,
+            'redirect_uri': self.redirect_uri,
+            'response_type': 'code',
+            'scope': 'read write',
+            'state': state,
+            'code_challenge': code_challenge,
+            'code_challenge_method': 'S256'
+        }
+        
+        auth_url = f"{self.auth_url}?{urllib.parse.urlencode(params)}"
+        return auth_url, code_verifier
+    
+    def exchange_code_for_tokens(self, authorization_code: str, code_verifier: str) -> bool:
+        """Exchange authorization code for access tokens."""
+        if not self.client_id or not self.client_secret:
+            raise ValueError("Anthropic client_id and client_secret must be configured")
+        
+        data = {
+            'grant_type': 'authorization_code',
+            'client_id': self.client_id,
+            'client_secret': self.client_secret,
+            'code': authorization_code,
+            'redirect_uri': self.redirect_uri,
+            'code_verifier': code_verifier
+        }
+        
+        try:
+            response = requests.post(self.token_url, data=data)
+            response.raise_for_status()
+            
+            token_data = response.json()
+            access_token = token_data['access_token']
+            refresh_token = token_data.get('refresh_token')
+            
+            self._save_tokens(access_token, refresh_token)
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to exchange code for tokens: {str(e)}")
+            return False
+    
+    def refresh_access_token(self) -> bool:
+        """Refresh the access token using refresh token."""
+        if not self._refresh_token:
+            logger.error("No refresh token available")
+            return False
+        
+        data = {
+            'grant_type': 'refresh_token',
+            'client_id': self.client_id,
+            'client_secret': self.client_secret,
+            'refresh_token': self._refresh_token
+        }
+        
+        try:
+            response = requests.post(self.token_url, data=data)
+            response.raise_for_status()
+            
+            token_data = response.json()
+            access_token = token_data['access_token']
+            refresh_token = token_data.get('refresh_token', self._refresh_token)
+            
+            self._save_tokens(access_token, refresh_token)
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to refresh access token: {str(e)}")
+            return False
+    
+    def is_authenticated(self) -> bool:
+        """Check if we have a valid access token."""
+        return bool(self._access_token)
+    
+    def start_oauth_flow(self) -> bool:
+        """Start the OAuth flow in a browser."""
+        if not self.client_id or not self.client_secret:
+            logger.error("Anthropic OAuth client_id and client_secret must be configured")
+            return False
+        
+        auth_url, code_verifier = self.get_authorization_url()
+        
+        # Start a local server to handle the callback
+        callback_received = threading.Event()
+        authorization_code = None
+        
+        class CallbackHandler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                nonlocal authorization_code
+                
+                if self.path.startswith('/callback'):
+                    query = urllib.parse.urlparse(self.path).query
+                    params = urllib.parse.parse_qs(query)
+                    
+                    if 'code' in params:
+                        authorization_code = params['code'][0]
+                        self.send_response(200)
+                        self.send_header('Content-type', 'text/html')
+                        self.end_headers()
+                        self.wfile.write(b'''
+                        <html><body>
+                        <h1>Authorization successful!</h1>
+                        <p>You can close this window and return to the CLI.</p>
+                        </body></html>
+                        ''')
+                        callback_received.set()
+                    else:
+                        self.send_response(400)
+                        self.send_header('Content-type', 'text/html')
+                        self.end_headers()
+                        self.wfile.write(b'<html><body><h1>Authorization failed!</h1></body></html>')
+                        callback_received.set()
+                else:
+                    self.send_response(404)
+                    self.end_headers()
+            
+            def log_message(self, format, *args):
+                # Suppress default logging
+                pass
+        
+        # Extract port from redirect URI
+        parsed_uri = urllib.parse.urlparse(self.redirect_uri)
+        port = parsed_uri.port or 8080
+        
+        # Start the callback server
+        with socketserver.TCPServer(("", port), CallbackHandler) as httpd:
+            server_thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+            server_thread.start()
+            
+            logger.info(f"Starting OAuth flow. Opening browser to: {auth_url}")
+            webbrowser.open(auth_url)
+            
+            # Wait for callback
+            if callback_received.wait(timeout=120):  # 2 minutes timeout
+                httpd.shutdown()
+                
+                if authorization_code:
+                    logger.info("Authorization code received, exchanging for tokens...")
+                    return self.exchange_code_for_tokens(authorization_code, code_verifier)
+                else:
+                    logger.error("Authorization failed")
+                    return False
+            else:
+                httpd.shutdown()
+                logger.error("OAuth flow timed out")
+                return False
+    
+    def make_api_request(self, prompt: str, model: Optional[str] = None) -> Optional[str]:
+        """Make an API request to Anthropic."""
+        if not self._access_token:
+            logger.error("No access token available. Please authenticate first.")
+            return None
+        
+        use_model = model or self.config.anthropic_model
+        
+        headers = {
+            'Authorization': f'Bearer {self._access_token}',
+            'Content-Type': 'application/json',
+            'anthropic-version': '2023-06-01'
+        }
+        
+        data = {
+            'model': use_model,
+            'max_tokens': 4000,
+            'system': self.config.anthropic_system_prompt,
+            'messages': [
+                {'role': 'user', 'content': prompt}
+            ]
+        }
+        
+        try:
+            response = requests.post(
+                f"{self.api_base}/v1/messages",
+                headers=headers,
+                json=data
+            )
+            
+            if response.status_code == 401:
+                # Token might be expired, try to refresh
+                logger.info("Access token expired, attempting to refresh...")
+                if self.refresh_access_token():
+                    # Update the headers with new token
+                    headers['Authorization'] = f'Bearer {self._access_token}'
+                    response = requests.post(
+                        f"{self.api_base}/v1/messages",
+                        headers=headers,
+                        json=data
+                    )
+                else:
+                    logger.error("Failed to refresh access token")
+                    return None
+            
+            response.raise_for_status()
+            response_data = response.json()
+            
+            # Track the cost if enabled
+            if self.config.cost_tracking_enabled:
+                from .cost_tracker import track_anthropic_api_call
+                track_anthropic_api_call(response_data, use_model)
+            
+            if 'content' in response_data and len(response_data['content']) > 0:
+                return response_data['content'][0]['text']
+            else:
+                logger.error(f"Invalid API response: {response_data}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Anthropic API call failed: {str(e)}")
+            return None
+
+
 class RSSProcessor:
     """Main processor for RSS feeds and articles."""
 
@@ -40,6 +327,11 @@ class RSSProcessor:
         self.db_session = db_session
         self._embedding_model = None
         self._vector_index = None
+        self._anthropic_client = None
+        
+        # Initialize AI provider client
+        if config.ai_provider == "anthropic":
+            self._anthropic_client = AnthropicOAuthClient(config)
 
     @property
     def embedding_model(self):
@@ -87,6 +379,46 @@ class RSSProcessor:
                 "with_summary": 0,
                 "with_value_analysis": 0
             }
+
+    def _call_ai_api(self, prompt: str, model: Optional[str] = None) -> Optional[str]:
+        """
+        Call the configured AI API with a prompt.
+
+        Args:
+            prompt: Prompt to send to the API
+            model: Model to use (default: config value)
+
+        Returns:
+            Response from the API or None if failed
+        """
+        if self.config.ai_provider == "anthropic":
+            return self._call_anthropic_api(prompt, model)
+        elif self.config.ai_provider == "openrouter":
+            return self._call_openrouter_api(prompt, model)
+        else:
+            logger.error(f"Unknown AI provider: {self.config.ai_provider}")
+            return None
+    
+    def _call_anthropic_api(self, prompt: str, model: Optional[str] = None) -> Optional[str]:
+        """
+        Call the Anthropic API with a prompt using OAuth.
+
+        Args:
+            prompt: Prompt to send to the API
+            model: Model to use (default: config value)
+
+        Returns:
+            Response from the API or None if failed
+        """
+        if not self._anthropic_client:
+            logger.error("Anthropic client not initialized")
+            return None
+        
+        if not self._anthropic_client.is_authenticated():
+            logger.error("Not authenticated with Anthropic. Please run OAuth flow first.")
+            return None
+        
+        return self._anthropic_client.make_api_request(prompt, model)
 
     def _call_openrouter_api(self, prompt: str, model: Optional[str] = None) -> Optional[str]:
         """
@@ -143,6 +475,30 @@ class RSSProcessor:
         except Exception as e:
             logger.error(f"API call failed: {str(e)}")
             return None
+    
+    def authenticate_anthropic(self) -> bool:
+        """Authenticate with Anthropic using OAuth."""
+        if self.config.ai_provider != "anthropic":
+            logger.error("Anthropic provider not selected")
+            return False
+        
+        if not self._anthropic_client:
+            self._anthropic_client = AnthropicOAuthClient(self.config)
+        
+        if self._anthropic_client.is_authenticated():
+            logger.info("Already authenticated with Anthropic")
+            return True
+        
+        logger.info("Starting Anthropic OAuth authentication...")
+        return self._anthropic_client.start_oauth_flow()
+    
+    def _get_processing_model(self) -> Optional[str]:
+        """Get the processing model for the configured AI provider."""
+        if self.config.ai_provider == "anthropic":
+            return self.config.anthropic_processing_model
+        elif self.config.ai_provider == "openrouter":
+            return self.config.openrouter_processing_model
+        return None
 
     def _generate_summary(self, article: Article) -> Optional[str]:
         """
@@ -159,7 +515,7 @@ class RSSProcessor:
             return None
 
         prompt = self.config.openrouter_prompt.format(content=article.content)
-        return self._call_openrouter_api(prompt)
+        return self._call_ai_api(prompt)
 
     def _analyze_value(self, article: Article) -> Tuple[Optional[str], Optional[int], Optional[str]]:
         """
@@ -175,7 +531,7 @@ class RSSProcessor:
             return None, None, None
 
         prompt = self.config.value_prompt.format(content=article.content)
-        response = self._call_openrouter_api(prompt, self.config.openrouter_processing_model)
+        response = self._call_ai_api(prompt, self._get_processing_model())
 
         if not response:
             return None, None, None
@@ -672,7 +1028,7 @@ Combined Content:
 
 Provide a comprehensive summary that synthesizes information from all sources."""
 
-        return self._call_openrouter_api(grouped_prompt)
+        return self._call_ai_api(grouped_prompt)
 
     def process_articles(self, batch_size: int = 10) -> Dict[str, int]:
         """
@@ -1041,7 +1397,7 @@ Provide a comprehensive summary that synthesizes information from all sources.""
         )
 
         # Call the API to generate the aggregated summary
-        llm_output = self._call_openrouter_api(prompt, self.config.openrouter_processing_model)
+        llm_output = self._call_ai_api(prompt, self._get_processing_model())
 
         if llm_output and filename:
             # Process the output to replace external links with Obsidian internal links

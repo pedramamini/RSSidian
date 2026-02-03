@@ -27,6 +27,10 @@ template = """# Feed Digest
 Ingestion_Date:: {ingestion_date}
 """
 
+[ai]
+# AI provider selection - choose between "openrouter" or "anthropic"
+provider = "openrouter"
+
 [search]
 # Search configuration options
 
@@ -245,8 +249,36 @@ default_lookback = 7
 # Maximum articles to process per feed during ingestion
 max_articles_per_feed = 25
 
-# Settings for duplicate/similar article detection and story merging
-similarity_threshold = 0.65  # Lower value for better story merging (0.65 = 65% similarity)
+# Settings for duplicate/similar article detection
+similarity_threshold = 0.70  # Higher values mean stricter matching (0.70 = 70% similarity)
+
+[anthropic]
+# Anthropic OAuth configuration (when using ai.provider = "anthropic")
+# Get these credentials from https://console.anthropic.com/
+
+# OAuth client credentials (required for OAuth)
+client_id = ""
+client_secret = ""
+
+# OAuth redirect URI (should match what you configure in Anthropic console)
+redirect_uri = "http://localhost:8080/callback"
+
+# Model configuration
+model = "claude-3-5-sonnet-20241022"
+processing_model = "claude-3-5-sonnet-20241022"
+
+# System prompt for Claude (this identifies the application as Claude Code)
+system_prompt = "You are Claude Code, Anthropic's official CLI for Claude."
+
+# Token storage file (tokens will be saved here after OAuth authentication)
+token_file = "~/.config/rssidian/anthropic_tokens.json"
+
+# Optional: You can also set tokens via environment variables:
+# RSSIDIAN_ANTHROPIC_CLIENT_ID
+# RSSIDIAN_ANTHROPIC_CLIENT_SECRET
+# RSSIDIAN_ANTHROPIC_ACCESS_TOKEN
+# RSSIDIAN_ANTHROPIC_REFRESH_TOKEN
 
 # Whether to analyze articles during ingestion for better performance
 analyze_during_ingestion = true
+
