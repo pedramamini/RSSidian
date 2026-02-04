@@ -815,6 +815,79 @@ Provide a comprehensive summary that synthesizes information from all sources.""
 
         return stats
 
+    def backfill_embeddings(self, batch_size: int = 100) -> Dict[str, int]:
+        """
+        Generate embeddings for processed articles that are missing them.
+
+        This handles the case where articles were processed before the embedding
+        fix was applied, leaving them with processed=True but no embedding data.
+
+        Args:
+            batch_size: Number of articles to process per batch before flushing
+
+        Returns:
+            Dictionary with backfill statistics
+        """
+        # Find articles that are processed but missing embeddings
+        # Check both embedding_vector IS NULL and embedding_generated=False
+        # to catch all cases (e.g., articles processed during ingestion skip embeddings)
+        from sqlalchemy import or_
+        missing = self.db_session.query(Article).filter(
+            Article.processed == True,
+            or_(
+                Article.embedding_vector.is_(None),
+                Article.embedding_generated == False
+            )
+        ).all()
+
+        if not missing:
+            logger.info("No articles missing embeddings")
+            return {"total": 0, "succeeded": 0, "failed": 0}
+
+        stats = {"total": len(missing), "succeeded": 0, "failed": 0}
+        logger.info(f"Backfilling embeddings for {len(missing)} articles...")
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[bold blue]{task.description}"),
+            BarColumn(bar_width=40, complete_style="green", finished_style="green"),
+            TaskProgressColumn(),
+            TimeElapsedColumn(),
+            TimeRemainingColumn(),
+            expand=True
+        ) as progress:
+            task = progress.add_task(
+                "[bold]Backfilling embeddings", total=len(missing)
+            )
+
+            for i, article in enumerate(missing):
+                try:
+                    text = article.content or article.summary or article.description
+                    if text:
+                        embedding = self._generate_embedding(text)
+                        self._store_embedding(article.id, embedding)
+                        article.embedding_generated = True
+                        stats["succeeded"] += 1
+                    else:
+                        stats["failed"] += 1
+                except Exception as e:
+                    logger.error(
+                        f"Error generating embedding for article {article.id}: {e}"
+                    )
+                    stats["failed"] += 1
+                progress.update(task, advance=1)
+
+                # Flush in batches to avoid unbounded memory usage
+                if (i + 1) % batch_size == 0:
+                    self._flush_embeddings()
+                    self.db_session.commit()
+
+            # Final flush for remaining embeddings
+            self._flush_embeddings()
+            self.db_session.commit()
+
+        return stats
+
     def _update_feed_statistics(self, feed_stats: Dict[int, Dict[str, Any]]):
         """
         Update feed statistics with processed article data.

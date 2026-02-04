@@ -602,7 +602,7 @@ def ingest(ctx, lookback, debug):
         if 'auto_muted' in result and result['auto_muted'] > 0:
             click.echo(f"Auto-muted {result['auto_muted']} feeds due to persistent errors. Use 'subscriptions list' to see details.")
         
-        # Step 2: Process fetched articles
+        # Step 2: Process fetched articles (summary, value analysis, embeddings)
         if result['new_articles'] > 0:
             click.echo("Processing new articles...")
             process_result = processor.process_articles()
@@ -610,7 +610,15 @@ def ingest(ctx, lookback, debug):
             click.echo(f"  With summaries: {process_result['with_summary']}")
             click.echo(f"  With value analysis: {process_result['with_value']}")
             click.echo(f"  With embeddings: {process_result['with_embedding']}")
-        
+
+        # Step 2b: Backfill embeddings for articles processed during ingestion
+        # When analyze_during_ingestion=True, articles get processed=True in rss.py
+        # but embeddings are not generated there, so backfill catches them.
+        backfill_result = processor.backfill_embeddings()
+        if backfill_result['total'] > 0:
+            click.echo(f"Backfilled embeddings: {backfill_result['succeeded']}/{backfill_result['total']} "
+                       f"({backfill_result['failed']} failed)")
+
         # Step 3: Generate digest
         click.echo("Generating digest...")
         lookback_period = lookback or config.default_lookback
@@ -772,6 +780,28 @@ def search(ctx, query, relevance, refresh):
     
     except Exception as e:
         console.print(f"[bold red]Error during search:[/bold red] {str(e)}")
+    finally:
+        db_session.close()
+
+
+@cli.command()
+@click.option("--batch-size", type=int, default=100, help="Articles per batch before flushing to index")
+@click.pass_context
+def backfill_embeddings(ctx, batch_size):
+    """Generate embeddings for processed articles that are missing them."""
+    config = ctx.obj["config"]
+    db_session = ensure_db_exists(config)
+
+    from .core import RSSProcessor
+
+    processor = RSSProcessor(config, db_session)
+
+    try:
+        result = processor.backfill_embeddings(batch_size=batch_size)
+        click.echo(f"Backfill complete: {result['succeeded']}/{result['total']} articles "
+                   f"({result['failed']} failed)")
+    except Exception as e:
+        click.echo(f"Error during backfill: {str(e)}", err=True)
     finally:
         db_session.close()
 
